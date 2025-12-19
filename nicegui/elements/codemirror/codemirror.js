@@ -12,6 +12,7 @@ export default {
     disable: Boolean,
     indent: String,
     highlightWhitespace: Boolean,
+    customCompletions: Array,
   },
   watch: {
     language(newLanguage) {
@@ -25,6 +26,9 @@ export default {
     },
     lineWrapping(newLineWrapping) {
       this.setLineWrapping(newLineWrapping);
+    },
+    customCompletions(newCompletions) {
+      this.setCustomCompletions(newCompletions);
     },
   },
   data() {
@@ -112,6 +116,73 @@ export default {
         effects: this.lineWrappingConfig.reconfigure(wrap ? [CM.EditorView.lineWrapping] : []),
       });
     },
+    highlightLines(lineIndices, cssClass, durationMs) {
+      if (!this.editor) return;
+
+      const view = this.editor;
+      const lines = view.dom.querySelectorAll('.cm-line');
+
+      lineIndices.forEach(idx => {
+        if (idx >= 0 && idx < lines.length) {
+          const line = lines[idx];
+          line.classList.add(cssClass);
+          line.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+          if (durationMs > 0) {
+            setTimeout(() => line.classList.remove(cssClass), durationMs);
+          }
+        }
+      });
+    },
+    setCustomCompletions(completions) {
+      if (!this.editor || !this.completionsConfig) return;
+      if (!completions || completions.length === 0) {
+        this.editor.dispatch({
+          effects: this.completionsConfig.reconfigure([]),
+        });
+        return;
+      }
+      
+      // Create a custom completion source from the provided completions
+      const customCompletionSource = (context) => {
+        // Get word before cursor
+        const word = context.matchBefore(/[\w.]+/);
+        if (!word && !context.explicit) return null;
+        
+        const from = word ? word.from : context.pos;
+        const text = word ? word.text : "";
+        
+        // Filter completions that match the current input
+        const matchingCompletions = completions.filter(c => {
+          const label = c.label || "";
+          return label.toLowerCase().startsWith(text.toLowerCase());
+        }).map(c => ({
+          label: c.label,
+          detail: c.detail || "",
+          info: c.info || "",
+          apply: c.apply || c.label,
+          type: c.type || "function",
+        }));
+        
+        if (matchingCompletions.length === 0) return null;
+        
+        return {
+          from: from,
+          options: matchingCompletions,
+          validFor: /^[\w.]*$/,
+        };
+      };
+      
+      // Create autocompletion extension with our custom source
+      const completionExtension = CM.autocompletion({
+        override: [customCompletionSource],
+        activateOnTyping: true,
+      });
+      
+      this.editor.dispatch({
+        effects: this.completionsConfig.reconfigure([completionExtension]),
+      });
+    },
     setupExtensions() {
       const self = this;
 
@@ -142,6 +213,7 @@ export default {
         this.languageConfig.of([]),
         this.editableConfig.of([]),
         this.lineWrappingConfig.of([]),
+        this.completionsConfig.of([]),
         CM.EditorView.theme({
           "&": { height: "100%" },
           ".cm-scroller": { overflow: "auto" },
@@ -165,6 +237,7 @@ export default {
     this.editableConfig = new CM.Compartment();
     this.editableStates = { true: CM.EditorView.editable.of(true), false: CM.EditorView.editable.of(false) };
     this.lineWrappingConfig = new CM.Compartment();
+    this.completionsConfig = new CM.Compartment();
 
     const extensions = this.setupExtensions();
 
@@ -180,5 +253,8 @@ export default {
     this.setTheme(this.theme);
     this.setDisabled(this.disable);
     this.setLineWrapping(this.lineWrapping);
+    if (this.customCompletions) {
+      this.setCustomCompletions(this.customCompletions);
+    }
   },
 };

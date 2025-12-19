@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Iterator
 from contextlib import nullcontext
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Literal, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, TypeVar, Union, cast
 
 from . import background_tasks, core, helpers
 from .awaitable_response import AwaitableResponse
@@ -78,6 +78,27 @@ class SceneClickHit:
 
 
 @dataclass(**KWONLY_SLOTS)
+class SceneGroundPoint:
+    """Ground plane intersection point from ray casting."""
+    x: float
+    y: float
+    z: float
+
+
+@dataclass(**KWONLY_SLOTS)
+class SceneClipPlane:
+    """Clipping plane definition for proximity-based visibility.
+
+    The plane is defined by its normal vector (nx, ny, nz) and distance (d).
+    Points on the positive side of the plane (where dot(normal, point) + d > 0) are visible.
+    """
+    nx: float
+    ny: float
+    nz: float
+    d: float
+
+
+@dataclass(**KWONLY_SLOTS)
 class SceneClickEventArguments(ClickEventArguments):
     click_type: str
     button: int
@@ -86,6 +107,13 @@ class SceneClickEventArguments(ClickEventArguments):
     meta: bool
     shift: bool
     hits: list[SceneClickHit]
+    ground_point: Optional[SceneGroundPoint] = None
+    screen_x: Optional[float] = None
+    screen_y: Optional[float] = None
+    client_x: Optional[float] = None
+    client_y: Optional[float] = None
+    offset_x: Optional[float] = None
+    offset_y: Optional[float] = None
 
 
 @dataclass(**KWONLY_SLOTS)
@@ -96,6 +124,23 @@ class SceneDragEventArguments(ClickEventArguments):
     x: float
     y: float
     z: float
+
+
+@dataclass(**KWONLY_SLOTS)
+class SceneTransformEventArguments(UiEventArguments):
+    type: Literal['transform', 'transform_start', 'transform_end']
+    object_id: str
+    object_name: str
+    x: float
+    y: float
+    z: float
+    rx: float
+    ry: float
+    rz: float
+    mode: Literal['translate', 'rotate', 'scale']
+    wx: Optional[float] = None
+    wy: Optional[float] = None
+    wz: Optional[float] = None
 
 
 @dataclass(**KWONLY_SLOTS)

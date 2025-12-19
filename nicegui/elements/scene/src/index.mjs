@@ -5,6 +5,7 @@ import { DragControls } from "three/addons/controls/DragControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
+import { TransformControls } from "three/addons/controls/TransformControls.js";
 import * as TWEEN from "@tweenjs/tween.js";
 import Stats from "three/examples/jsm/libs/stats.module.js";
 
@@ -17,6 +18,7 @@ export default {
   GLTFLoader,
   OrbitControls,
   STLLoader,
+  TransformControls,
   THREE,
   TWEEN,
   Stats,

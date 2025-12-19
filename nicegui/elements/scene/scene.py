@@ -12,7 +12,10 @@ from ...events import (
     Handler,
     SceneClickEventArguments,
     SceneClickHit,
+    SceneClipPlane,
     SceneDragEventArguments,
+    SceneGroundPoint,
+    SceneTransformEventArguments,
     handle_event,
 )
 from .scene_object3d import Object3D
@@ -20,7 +23,7 @@ from .scene_object3d import Object3D
 
 @dataclass(**KWONLY_SLOTS)
 class SceneCamera:
-    type: Literal['perspective', 'orthographic']
+    type: Literal["perspective", "orthographic"]
     params: dict[str, float]
     x: float = 0
     y: float = -3
@@ -35,10 +38,10 @@ class SceneCamera:
 
 @dataclass(**KWONLY_SLOTS)
 class SceneObject:
-    id: str = 'scene'
+    id: str = "scene"
 
 
-class Scene(Element, component='scene.js', esm={'nicegui-scene': 'dist'}, default_classes='nicegui-scene'):
+class Scene(Element, component="scene.js", esm={"nicegui-scene": "dist"}, default_classes="nicegui-scene"):
     # pylint: disable=import-outside-toplevel
     from .scene_objects import AxesHelper as axes_helper
     from .scene_objects import Box as box
@@ -58,21 +61,26 @@ class Scene(Element, component='scene.js', esm={'nicegui-scene': 'dist'}, defaul
     from .scene_objects import Text3d as text3d
     from .scene_objects import Texture as texture
 
-    def __init__(self,
-                 width: int = 400,
-                 height: int = 300,
-                 # DEPRECATED: enforce keyword-only arguments in NiceGUI 4.0
-                 grid: Union[bool, tuple[int, int]] = True,
-                 camera: Optional[SceneCamera] = None,
-                 on_click: Optional[Handler[SceneClickEventArguments]] = None,
-                 click_events: list[str] = ['click', 'dblclick'],  # noqa: B006
-                 on_drag_start: Optional[Handler[SceneDragEventArguments]] = None,
-                 on_drag_end: Optional[Handler[SceneDragEventArguments]] = None,
-                 drag_constraints: str = '',
-                 background_color: str = '#eee',
-                 fps: int = 20,
-                 show_stats: bool = False,
-                 ) -> None:
+    def __init__(
+        self,
+        width: int = 400,
+        height: int = 300,
+        # DEPRECATED: enforce keyword-only arguments in NiceGUI 4.0
+        grid: Union[bool, tuple[int, int]] = True,
+        polar_grid: Optional[tuple[float, int, int]] = None,
+        camera: Optional[SceneCamera] = None,
+        on_click: Optional[Handler[SceneClickEventArguments]] = None,
+        click_events: list[str] = ["click", "dblclick"],  # noqa: B006
+        on_drag_start: Optional[Handler[SceneDragEventArguments]] = None,
+        on_drag_end: Optional[Handler[SceneDragEventArguments]] = None,
+        on_transform: Optional[Handler[SceneTransformEventArguments]] = None,
+        on_transform_start: Optional[Handler[SceneTransformEventArguments]] = None,
+        on_transform_end: Optional[Handler[SceneTransformEventArguments]] = None,
+        drag_constraints: str = "",
+        background_color: str = "#eee",
+        fps: int = 20,
+        show_stats: bool = False,
+    ) -> None:
         """3D Scene
 
         Display a 3D scene using `three.js <https://threejs.org/>`_.
@@ -83,37 +91,52 @@ class Scene(Element, component='scene.js', esm={'nicegui-scene': 'dist'}, defaul
         :param width: width of the canvas
         :param height: height of the canvas
         :param grid: whether to display a grid (boolean or tuple of ``size`` and ``divisions`` for `Three.js' GridHelper <https://threejs.org/docs/#api/en/helpers/GridHelper>`_, default: 100x100)
+        :param polar_grid: whether to display a polar grid (boolean or tuple of ``(radius, sectors, rings)`` for `Three.js' PolarGridHelper <https://threejs.org/docs/#api/en/helpers/PolarGridHelper>`_, default: 1,10,10)
         :param camera: camera definition, either instance of ``ui.scene.perspective_camera`` (default) or ``ui.scene.orthographic_camera``
         :param on_click: callback to execute when a 3D object is clicked (use ``click_events`` to specify which events to subscribe to)
         :param click_events: list of JavaScript click events to subscribe to (default: ``['click', 'dblclick']``)
         :param on_drag_start: callback to execute when a 3D object is dragged
         :param on_drag_end: callback to execute when a 3D object is dropped
+        :param on_transform: callback to execute continuously while a 3D object is being transformed via TransformControls
+        :param on_transform_start: callback to execute when TransformControls gizmo interaction starts
+        :param on_transform_end: callback to execute when TransformControls gizmo interaction ends
         :param drag_constraints: comma-separated JavaScript expression for constraining positions of dragged objects (e.g. ``'x = 0, z = y / 2'``)
         :param background_color: background color of the scene (default: "#eee")
         :param fps: target frame rate for the scene in frames per second (default: 20, *added in version 3.2.0*)
         :param show_stats: whether to show performance stats (default: ``False``, *added in version 3.2.0*)
         """
         super().__init__()
-        self._props['width'] = width
-        self._props['height'] = height
-        self._props['fps'] = fps
-        self._props['show_stats'] = show_stats
-        self._props['grid'] = grid
-        self._props['background_color'] = background_color
+        self._props["width"] = width
+        self._props["height"] = height
+        self._props["fps"] = fps
+        self._props["show_stats"] = show_stats
+        self._props["grid"] = grid
+        self._props["polar_grid"] = polar_grid
+        self._props["background_color"] = background_color
         self.camera = camera or self.perspective_camera()
-        self._props['camera_type'] = self.camera.type
-        self._props['camera_params'] = self.camera.params
+        self._props["camera_type"] = self.camera.type
+        self._props["camera_params"] = self.camera.params
         self.objects: dict[str, Object3D] = {}
         self.stack: list[Union[Object3D, SceneObject]] = [SceneObject()]
         self._click_handlers = [on_click] if on_click else []
-        self._props['click_events'] = click_events[:]
+        self._props["click_events"] = click_events[:]
         self._drag_start_handlers = [on_drag_start] if on_drag_start else []
         self._drag_end_handlers = [on_drag_end] if on_drag_end else []
-        self.on('init', self._handle_init)
-        self.on('click3d', self._handle_click)
-        self.on('dragstart', self._handle_drag)
-        self.on('dragend', self._handle_drag)
-        self._props['drag_constraints'] = drag_constraints
+        self._transform_handlers: list[Handler[SceneTransformEventArguments]] = [on_transform] if on_transform else []
+        self._transform_start_handlers: list[Handler[SceneTransformEventArguments]] = (
+            [on_transform_start] if on_transform_start else []
+        )
+        self._transform_end_handlers: list[Handler[SceneTransformEventArguments]] = (
+            [on_transform_end] if on_transform_end else []
+        )
+        self.on("init", self._handle_init)
+        self.on("click3d", self._handle_click)
+        self.on("dragstart", self._handle_drag)
+        self.on("dragend", self._handle_drag)
+        self.on("transform", self._handle_transform)
+        self.on("transform_start", self._handle_transform)
+        self.on("transform_end", self._handle_transform)
+        self._props["drag_constraints"] = drag_constraints
 
     def on_click(self, callback: Handler[SceneClickEventArguments]) -> Self:
         """Add a callback to be invoked when a 3D object is clicked."""
@@ -130,6 +153,21 @@ class Scene(Element, component='scene.js', esm={'nicegui-scene': 'dist'}, defaul
         self._drag_end_handlers.append(callback)
         return self
 
+    def on_transform(self, callback: Handler[SceneTransformEventArguments]) -> Self:
+        """Add a callback to be invoked when a 3D object is transformed (continuously during drag)."""
+        self._transform_handlers.append(callback)
+        return self
+
+    def on_transform_start(self, callback: Handler[SceneTransformEventArguments]) -> Self:
+        """Add a callback to be invoked when transform gizmo interaction starts."""
+        self._transform_start_handlers.append(callback)
+        return self
+
+    def on_transform_end(self, callback: Handler[SceneTransformEventArguments]) -> Self:
+        """Add a callback to be invoked when transform gizmo interaction ends."""
+        self._transform_end_handlers.append(callback)
+        return self
+
     @staticmethod
     def perspective_camera(*, fov: float = 75, near: float = 0.1, far: float = 1000) -> SceneCamera:
         """Create a perspective camera.
@@ -138,7 +176,7 @@ class Scene(Element, component='scene.js', esm={'nicegui-scene': 'dist'}, defaul
         :param near: near clipping plane
         :param far: far clipping plane
         """
-        return SceneCamera(type='perspective', params={'fov': fov, 'near': near, 'far': far})
+        return SceneCamera(type="perspective", params={"fov": fov, "near": near, "far": far})
 
     @staticmethod
     def orthographic_camera(*, size: float = 10, near: float = 0.1, far: float = 1000) -> SceneCamera:
@@ -151,7 +189,7 @@ class Scene(Element, component='scene.js', esm={'nicegui-scene': 'dist'}, defaul
         :param near: near clipping plane
         :param far: far clipping plane
         """
-        return SceneCamera(type='orthographic', params={'size': size, 'near': near, 'far': far})
+        return SceneCamera(type="orthographic", params={"size": size, "near": near, "far": far})
 
     def __enter__(self) -> Self:
         Object3D.current_scene = self
@@ -166,32 +204,47 @@ class Scene(Element, component='scene.js', esm={'nicegui-scene': 'dist'}, defaul
 
     def _handle_init(self) -> None:
         self.move_camera(duration=0)
-        self.run_method('init_objects', [obj.data for obj in self.objects.values()])
+        self.run_method("init_objects", [obj.data for obj in self.objects.values()])
 
     async def initialized(self) -> None:
         """Wait until the scene is initialized."""
         event = asyncio.Event()
-        self.on('init', event.set, [])
+        self.on("init", event.set, [])
         await self.client.connected()
         await event.wait()
 
     def _handle_click(self, e: GenericEventArguments) -> None:
+        # Parse ground_point if present (ray-plane intersection with Z=0)
+        gp = e.args.get("ground_point")
+        ground_point = SceneGroundPoint(x=gp["x"], y=gp["y"], z=gp["z"]) if gp else None
+
         arguments = SceneClickEventArguments(
             sender=self,
             client=self.client,
-            click_type=e.args['click_type'],
-            button=e.args['button'],
-            alt=e.args['alt_key'],
-            ctrl=e.args['ctrl_key'],
-            meta=e.args['meta_key'],
-            shift=e.args['shift_key'],
-            hits=[SceneClickHit(
-                object_id=hit['object_id'],
-                object_name=hit['object_name'],
-                x=hit['point']['x'],
-                y=hit['point']['y'],
-                z=hit['point']['z'],
-            ) for hit in e.args['hits']],
+            click_type=e.args["click_type"],
+            button=e.args["button"],
+            alt=e.args["alt_key"],
+            ctrl=e.args["ctrl_key"],
+            meta=e.args["meta_key"],
+            shift=e.args["shift_key"],
+            hits=[
+                SceneClickHit(
+                    object_id=hit["object_id"],
+                    object_name=hit["object_name"],
+                    x=hit["point"]["x"],
+                    y=hit["point"]["y"],
+                    z=hit["point"]["z"],
+                )
+                for hit in e.args["hits"]
+            ],
+            ground_point=ground_point,
+            # Screen coordinates for drag detection
+            screen_x=e.args.get("screen_x"),
+            screen_y=e.args.get("screen_y"),
+            client_x=e.args.get("client_x"),
+            client_y=e.args.get("client_y"),
+            offset_x=e.args.get("offset_x"),
+            offset_y=e.args.get("offset_y"),
         )
         for handler in self._click_handlers:
             handle_event(handler, arguments)
@@ -200,33 +253,187 @@ class Scene(Element, component='scene.js', esm={'nicegui-scene': 'dist'}, defaul
         arguments = SceneDragEventArguments(
             sender=self,
             client=self.client,
-            type=e.args['type'],
-            object_id=e.args['object_id'],
-            object_name=e.args['object_name'],
-            x=e.args['x'],
-            y=e.args['y'],
-            z=e.args['z'],
+            type=e.args["type"],
+            object_id=e.args["object_id"],
+            object_name=e.args["object_name"],
+            x=e.args["x"],
+            y=e.args["y"],
+            z=e.args["z"],
         )
-        if arguments.type == 'dragend':
+        if arguments.type == "dragend":
             self.objects[arguments.object_id].move(arguments.x, arguments.y, arguments.z)
 
-        for handler in (self._drag_start_handlers if arguments.type == 'dragstart' else self._drag_end_handlers):
+        for handler in self._drag_start_handlers if arguments.type == "dragstart" else self._drag_end_handlers:
             handle_event(handler, arguments)
+
+    def _handle_transform(self, e: GenericEventArguments) -> None:
+        event_type = e.args["type"]
+        arguments = SceneTransformEventArguments(
+            sender=self,
+            client=self.client,
+            type=event_type,
+            object_id=e.args["object_id"],
+            object_name=e.args.get("object_name", ""),
+            x=e.args["x"],
+            y=e.args["y"],
+            z=e.args["z"],
+            wx=e.args.get("wx"),
+            wy=e.args.get("wy"),
+            wz=e.args.get("wz"),
+            rx=e.args["rx"],
+            ry=e.args["ry"],
+            rz=e.args["rz"],
+            mode=e.args["mode"],
+        )
+        # Update internal object state on transform end
+        if event_type == "transform_end" and arguments.object_id in self.objects:
+            obj = self.objects[arguments.object_id]
+            obj.x = arguments.x
+            obj.y = arguments.y
+            obj.z = arguments.z
+            # Note: rotation is stored as Euler angles from Three.js
+
+        # Dispatch to appropriate handlers
+        if event_type == "transform":
+            handlers = self._transform_handlers
+        elif event_type == "transform_start":
+            handlers = self._transform_start_handlers
+        else:  # transform_end
+            handlers = self._transform_end_handlers
+
+        for handler in handlers:
+            handle_event(handler, arguments)
+
+    def enable_transform_controls(
+        self,
+        object_id: str,
+        mode: Literal["translate", "rotate", "scale"] = "translate",
+        size: Optional[float] = None,
+        visible_axes: Optional[list[Literal["X", "Y", "Z"]]] = None,
+    ) -> None:
+        """Enable TransformControls gizmo on an object.
+
+        :param object_id: ID of the object to attach transform controls to
+        :param mode: transform mode - 'translate', 'rotate', or 'scale'
+        :param size: optional gizmo size multiplier
+        :param visible_axes: list of axes to show (e.g., ['X'] for X-only, ['X', 'Y'] for X and Y). If None, shows all axes.
+        """
+        self.run_method("enable_transform_controls", object_id, mode, size, visible_axes)
+
+    def disable_transform_controls(self, object_id: str) -> None:
+        """Disable TransformControls gizmo on an object.
+
+        :param object_id: ID of the object to detach transform controls from
+        """
+        self.run_method("disable_transform_controls", object_id)
+
+    def set_transform_mode(self, object_id: str, mode: Literal["translate", "rotate", "scale"]) -> None:
+        """Change the transform mode of an object's gizmo.
+
+        :param object_id: ID of the object with transform controls
+        :param mode: transform mode - 'translate', 'rotate', or 'scale'
+        """
+        self.run_method("set_transform_mode", object_id, mode)
+
+    def set_transform_size(self, object_id: str, size: float) -> None:
+        """Change the size of an object's transform gizmo.
+
+        :param object_id: ID of the object with transform controls
+        :param size: gizmo size multiplier
+        """
+        self.run_method("set_transform_size", object_id, size)
+
+    def set_transform_space(self, object_id: str, space: Literal["local", "world"]) -> None:
+        """Set transform controls space for an object's gizmo.
+
+        :param object_id: ID of the object with transform controls
+        :param space: 'local' or 'world'
+        """
+        self.run_method("set_transform_space", object_id, space)
+
+    def set_transform_rotation_snap(self, object_id: str, radians: float) -> None:
+        """Set rotation snapping for an object's transform gizmo.
+
+        :param object_id: ID of the object with transform controls
+        :param radians: snap angle in radians (e.g., 0.0873 for 5 degrees)
+        """
+        self.run_method("set_transform_rotation_snap", object_id, radians)
+
+    async def has_transform_controls(self, object_id: str) -> bool:
+        """Check whether an object currently has TransformControls attached.
+
+        :param object_id: ID of the object to check
+        :return: True if TransformControls are attached, False otherwise
+        """
+        return await self.run_method("has_transform_controls", object_id)
+
+    def set_orbit_enabled(self, flag: bool) -> None:
+        """Enable or disable OrbitControls interaction.
+
+        :param flag: True to enable orbit controls, False to disable
+        """
+        self.run_method("set_orbit_enabled", flag)
+
+    # Orientation inset configuration (opt-in). These proxy to scene.js methods.
+    def set_axes_inset(self, opts: dict[str, Any]) -> None:
+        """Configure the orientation inset overlay.
+
+        opts keys:
+          - enabled: bool (default False)
+          - size: int (pixels)
+          - margin: int (pixels, used if marginX/Y omitted)
+          - marginX: int (pixels)
+          - marginY: int (pixels)
+          - anchor: 'bottom-left' | 'bottom-right' | 'top-left' | 'top-right'
+        """
+        self.run_method("set_axes_inset", opts)
+
+    def set_axes_labels(self, opts: dict[str, Any]) -> None:
+        """Configure axis labels for the orientation inset.
+
+        opts keys:
+          - enabled: bool (default False)
+          - font: CSS font string (e.g., 'bold 32px sans-serif')
+          - colorX, colorY, colorZ: CSS colors
+          - size: sprite scale (default 0.35)
+        """
+        self.run_method("set_axes_labels", opts)
+
+    def set_clipping_planes(self, object_id: str, planes: list[SceneClipPlane]) -> None:
+        """Set clipping planes for an object (for proximity-based visibility).
+
+        :param object_id: ID of the object to apply clipping to
+        :param planes: list of SceneClipPlane objects defining the clipping planes
+
+        Example: To clip everything below Z=0.1:
+            scene.set_clipping_planes('my_sphere', [SceneClipPlane(nx=0, ny=0, nz=1, d=-0.1)])
+        """
+        plane_dicts = [{"nx": p.nx, "ny": p.ny, "nz": p.nz, "d": p.d} for p in planes]
+        self.run_method("set_clipping_planes", object_id, plane_dicts)
+
+    def clear_clipping_planes(self, object_id: str) -> None:
+        """Clear clipping planes from an object.
+
+        :param object_id: ID of the object to remove clipping from
+        """
+        self.run_method("clear_clipping_planes", object_id)
 
     def __len__(self) -> int:
         return len(self.objects)
 
-    def move_camera(self,
-                    x: Optional[float] = None,
-                    y: Optional[float] = None,
-                    z: Optional[float] = None,
-                    look_at_x: Optional[float] = None,
-                    look_at_y: Optional[float] = None,
-                    look_at_z: Optional[float] = None,
-                    up_x: Optional[float] = None,
-                    up_y: Optional[float] = None,
-                    up_z: Optional[float] = None,
-                    duration: float = 0.5) -> None:
+    def move_camera(
+        self,
+        x: Optional[float] = None,
+        y: Optional[float] = None,
+        z: Optional[float] = None,
+        look_at_x: Optional[float] = None,
+        look_at_y: Optional[float] = None,
+        look_at_z: Optional[float] = None,
+        up_x: Optional[float] = None,
+        up_y: Optional[float] = None,
+        up_z: Optional[float] = None,
+        duration: float = 0.5,
+    ) -> None:
         """Move the camera to a new position.
 
         :param x: camera x position
@@ -249,10 +456,19 @@ class Scene(Element, component='scene.js', esm={'nicegui-scene': 'dist'}, defaul
         self.camera.up_x = self.camera.up_x if up_x is None else up_x
         self.camera.up_y = self.camera.up_y if up_y is None else up_y
         self.camera.up_z = self.camera.up_z if up_z is None else up_z
-        self.run_method('move_camera',
-                        self.camera.x, self.camera.y, self.camera.z,
-                        self.camera.look_at_x, self.camera.look_at_y, self.camera.look_at_z,
-                        self.camera.up_x, self.camera.up_y, self.camera.up_z, duration)
+        self.run_method(
+            "move_camera",
+            self.camera.x,
+            self.camera.y,
+            self.camera.z,
+            self.camera.look_at_x,
+            self.camera.look_at_y,
+            self.camera.look_at_z,
+            self.camera.up_x,
+            self.camera.up_y,
+            self.camera.up_z,
+            duration,
+        )
 
     async def get_camera(self) -> dict[str, Any]:
         """Get the current camera parameters.
@@ -260,7 +476,7 @@ class Scene(Element, component='scene.js', esm={'nicegui-scene': 'dist'}, defaul
         In contrast to the `camera` property,
         the result of this method includes the current camera pose caused by the user navigating the scene in the browser.
         """
-        return await self.run_method('get_camera')
+        return await self.run_method("get_camera")
 
     def _handle_delete(self) -> None:
         binding.remove(list(self.objects.values()))
