@@ -13,6 +13,7 @@ export default {
     indent: String,
     highlightWhitespace: Boolean,
     customCompletions: Array,
+    decorations: Object,
   },
   watch: {
     language(newLanguage) {
@@ -29,6 +30,12 @@ export default {
     },
     customCompletions(newCompletions) {
       this.setCustomCompletions(newCompletions);
+    },
+    decorations: {
+      deep: true,
+      handler(newDecorations) {
+        this.setDecorations(newDecorations);
+      },
     },
   },
   data() {
@@ -119,20 +126,39 @@ export default {
     highlightLines(lineIndices, cssClass, durationMs) {
       if (!this.editor) return;
 
-      const view = this.editor;
-      const lines = view.dom.querySelectorAll('.cm-line');
+      // Build line decorations from indices (0-indexed to 1-indexed)
+      const lineDecorations = lineIndices
+        .filter(idx => idx >= 0 && idx < this.editor.state.doc.lines)
+        .map(idx => ({
+          kind: "line",
+          line: idx + 1,
+          class: cssClass,
+        }));
 
-      lineIndices.forEach(idx => {
-        if (idx >= 0 && idx < lines.length) {
-          const line = lines[idx];
-          line.classList.add(cssClass);
-          line.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (lineDecorations.length === 0) return;
 
-          if (durationMs > 0) {
-            setTimeout(() => line.classList.remove(cssClass), durationMs);
-          }
-        }
+      // Apply decorations using internal _highlight set
+      const current = { ...(this.decorations || {}) };
+      current._highlight = lineDecorations;
+      this.setDecorations(current);
+
+      // Scroll first line into view
+      const firstLineNum = Math.min(...lineIndices) + 1;
+      const line = this.editor.state.doc.line(
+        Math.max(1, Math.min(firstLineNum, this.editor.state.doc.lines))
+      );
+      this.editor.dispatch({
+        effects: CM.EditorView.scrollIntoView(line.from, { y: "center" }),
       });
+
+      // Auto-remove after duration
+      if (durationMs > 0) {
+        setTimeout(() => {
+          const updated = { ...(this.decorations || {}) };
+          delete updated._highlight;
+          this.setDecorations(updated);
+        }, durationMs);
+      }
     },
     setCustomCompletions(completions) {
       if (!this.editor || !this.completionsConfig) return;
@@ -183,6 +209,81 @@ export default {
         effects: this.completionsConfig.reconfigure([completionExtension]),
       });
     },
+    setDecorations(decorationSets) {
+      if (!this.editor || !this.decorationsConfig) return;
+
+      if (!decorationSets || Object.keys(decorationSets).length === 0) {
+        this.editor.dispatch({
+          effects: this.decorationsConfig.reconfigure([]),
+        });
+        return;
+      }
+
+      const allDecorations = [];
+      for (const specs of Object.values(decorationSets)) {
+        for (const spec of specs) {
+          const dec = this.createDecoration(spec);
+          if (dec) allDecorations.push(dec);
+        }
+      }
+
+      // Sort by position (required by CM6)
+      allDecorations.sort((a, b) => a.from - b.from);
+
+      const decorationSet = CM.Decoration.set(allDecorations, true);
+      const decorationExtension = CM.EditorView.decorations.of(decorationSet);
+
+      this.editor.dispatch({
+        effects: this.decorationsConfig.reconfigure([
+          decorationExtension,
+          this.getDecorationStyles(),
+        ]),
+      });
+    },
+    createDecoration(spec) {
+      const doc = this.editor.state.doc;
+
+      if (spec.kind === "mark") {
+        const from = Math.max(0, Math.min(spec.from, doc.length));
+        const to = Math.max(from, Math.min(spec.to, doc.length));
+        const markSpec = {};
+        if (spec.class) markSpec.class = spec.class;
+        if (spec.attributes) markSpec.attributes = spec.attributes;
+        if (spec.inclusiveStart !== undefined) markSpec.inclusiveStart = spec.inclusiveStart;
+        if (spec.inclusiveEnd !== undefined) markSpec.inclusiveEnd = spec.inclusiveEnd;
+        return CM.Decoration.mark(markSpec).range(from, to);
+
+      } else if (spec.kind === "line") {
+        const lineNum = Math.max(1, Math.min(spec.line, doc.lines));
+        const line = doc.line(lineNum);
+        const lineSpec = {};
+        if (spec.class) lineSpec.class = spec.class;
+        if (spec.attributes) lineSpec.attributes = spec.attributes;
+        return CM.Decoration.line(lineSpec).range(line.from);
+      }
+      return null;
+    },
+    getDecorationStyles() {
+      return CM.EditorView.baseTheme({
+        ".cm-diff-added": {
+          backgroundColor: "rgba(0, 255, 0, 0.2)",
+          borderRadius: "2px",
+        },
+        ".cm-diff-deleted": {
+          backgroundColor: "rgba(255, 0, 0, 0.2)",
+          textDecoration: "line-through",
+        },
+        ".cm-diff-line-added": {
+          backgroundColor: "rgba(0, 255, 0, 0.1)",
+        },
+        ".cm-diff-line-deleted": {
+          backgroundColor: "rgba(255, 0, 0, 0.1)",
+        },
+        ".cm-highlighted": {
+          backgroundColor: "rgba(255, 255, 0, 0.3)",
+        },
+      });
+    },
     setupExtensions() {
       const self = this;
 
@@ -214,6 +315,7 @@ export default {
         this.editableConfig.of([]),
         this.lineWrappingConfig.of([]),
         this.completionsConfig.of([]),
+        this.decorationsConfig.of([]),
         CM.EditorView.theme({
           "&": { height: "100%" },
           ".cm-scroller": { overflow: "auto" },
@@ -238,6 +340,7 @@ export default {
     this.editableStates = { true: CM.EditorView.editable.of(true), false: CM.EditorView.editable.of(false) };
     this.lineWrappingConfig = new CM.Compartment();
     this.completionsConfig = new CM.Compartment();
+    this.decorationsConfig = new CM.Compartment();
 
     const extensions = this.setupExtensions();
 

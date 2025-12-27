@@ -301,6 +301,7 @@ class CodeMirror(
         self._props["lineWrapping"] = line_wrapping
         self._props["highlightWhitespace"] = highlight_whitespace
         self._props["customCompletions"] = custom_completions or []
+        self._props["decorations"] = {}
         self._update_method = "setEditorValueFromProps"
 
     @property
@@ -378,6 +379,60 @@ class CodeMirror(
             - type: The type of completion for styling (optional, e.g., 'function', 'variable', 'class')
         """
         self._props["customCompletions"] = completions or []
+
+    def set_decorations(
+        self,
+        decorations: list[dict],
+        set_name: str = "default",
+    ) -> None:
+        """Set decorations for a named decoration set.
+
+        Decorations allow styling of text ranges or entire lines using CodeMirror's
+        state-managed decoration system (survives re-renders unlike DOM manipulation).
+
+        Each decoration dict should have:
+            - kind: "mark" or "line"
+
+        For mark decorations (inline text styling):
+            - from: Start position (0-indexed character offset)
+            - to: End position (0-indexed, exclusive)
+            - class: CSS class to apply (optional)
+            - attributes: Dict of HTML attributes (optional)
+            - inclusiveStart: Include start in decoration (optional)
+            - inclusiveEnd: Include end in decoration (optional)
+
+        For line decorations (full-line styling):
+            - line: Line number (1-indexed)
+            - class: CSS class to apply (optional)
+            - attributes: Dict of HTML attributes (optional)
+
+        Built-in CSS classes available:
+            - cm-diff-added: Green background for added text
+            - cm-diff-deleted: Red background with strikethrough
+            - cm-diff-line-added: Light green line background
+            - cm-diff-line-deleted: Light red line background
+            - cm-highlighted: Yellow highlight
+
+        Args:
+            decorations: List of decoration specification dicts
+            set_name: Named set for independent management (e.g., "diff", "errors")
+        """
+        current = dict(self._props.get("decorations", {}))
+        current[set_name] = decorations
+        self._props["decorations"] = current
+
+    def clear_decorations(self, set_name: str | None = None) -> None:
+        """Clear decorations.
+
+        Args:
+            set_name: Clear only this named set, or all decorations if None
+        """
+        if set_name is None:
+            self._props["decorations"] = {}
+        else:
+            current = dict(self._props.get("decorations", {}))
+            current.pop(set_name, None)
+            self._props["decorations"] = current
 
     def highlight_lines(
         self,
