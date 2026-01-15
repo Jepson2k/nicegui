@@ -148,6 +148,20 @@ class Object3D:
         """
         return self.rotate_R(self.rotation_matrix_from_euler(r_x, r_y, r_z))
 
+    def rotate_euler(self, r_x: float, r_y: float, r_z: float, order: str = 'XYZ') -> Self:
+        """Rotate the object using Euler angles directly.
+
+        This method sets Euler angles directly without matrix conversion,
+        avoiding potential rotation order mismatches.
+
+        :param r_x: rotation around the x axis in radians
+        :param r_y: rotation around the y axis in radians
+        :param r_z: rotation around the z axis in radians
+        :param order: Euler rotation order (default 'XYZ')
+        """
+        self.scene.run_method('rotate_euler', self.id, r_x, r_y, r_z, order)
+        return self
+
     def rotate_R(self, R: list[list[float]]) -> Self:
         """Rotate the object.
 

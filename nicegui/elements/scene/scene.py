@@ -367,6 +367,25 @@ class Scene(Element, component="scene.js", esm={"nicegui-scene": "dist"}, defaul
         """
         return await self.run_method("has_transform_controls", object_id)
 
+    def set_transform_axis_colors(
+        self, object_id: str, x: int | None = None, y: int | None = None, z: int | None = None
+    ) -> None:
+        """Update TransformControls axis colors.
+
+        :param object_id: ID of the object with transform controls
+        :param x: hex color for X axis (e.g., 0xff0000 for red)
+        :param y: hex color for Y axis (e.g., 0x00ff00 for green)
+        :param z: hex color for Z axis (e.g., 0x0000ff for blue)
+        """
+        color_map = {}
+        if x is not None:
+            color_map["x"] = x
+        if y is not None:
+            color_map["y"] = y
+        if z is not None:
+            color_map["z"] = z
+        self.run_method("set_transform_axis_colors", object_id, color_map)
+
     def set_orbit_enabled(self, flag: bool) -> None:
         """Enable or disable OrbitControls interaction.
 

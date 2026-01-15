@@ -493,6 +493,13 @@ export default {
       );
       this.objects.get(object_id).rotation.setFromRotationMatrix(R4.transpose());
     },
+    rotate_euler(object_id, rx, ry, rz, order = 'XYZ') {
+      // Set rotation directly from Euler angles to avoid matrix conversion issues
+      if (!this.objects.has(object_id)) return;
+      const obj = this.objects.get(object_id);
+      obj.rotation.order = order;
+      obj.rotation.set(rx, ry, rz);
+    },
     visible(object_id, value) {
       if (!this.objects.has(object_id)) return;
       this.objects.get(object_id).visible = value;
@@ -556,7 +563,7 @@ export default {
       tc.attach(object);
       tc.setMode(mode); // 'translate', 'rotate', or 'scale'
       if (mode === "translate") {
-        // Use world space for translation to avoid local-axis confusion (especially for TCP ball)
+        // Use world space for translation
         tc.setSpace("world");
       }
       if (size !== undefined && size !== null) {
@@ -720,6 +727,29 @@ export default {
     },
     has_transform_controls(object_id) {
       return this.transform_controls.has(object_id);
+    },
+    // Update TransformControls axis colors to match reference frame
+    // color_map: {x: 0xff0000, y: 0x00ff00, z: 0x0000ff} (hex colors)
+    set_transform_axis_colors(object_id, color_map) {
+      if (!this.transform_controls.has(object_id)) return;
+      const tc = this.transform_controls.get(object_id);
+      // TransformControls uses _gizmo (private property)
+      const gizmo = tc._gizmo || tc.gizmo;
+      if (!gizmo || !gizmo.materialLib) return;
+      // Update colors in materialLib (xAxis, yAxis, zAxis and transparent variants)
+      const lib = gizmo.materialLib;
+      if (color_map.x !== undefined) {
+        if (lib.xAxis) lib.xAxis.color.setHex(color_map.x);
+        if (lib.xAxisTransparent) lib.xAxisTransparent.color.setHex(color_map.x);
+      }
+      if (color_map.y !== undefined) {
+        if (lib.yAxis) lib.yAxis.color.setHex(color_map.y);
+        if (lib.yAxisTransparent) lib.yAxisTransparent.color.setHex(color_map.y);
+      }
+      if (color_map.z !== undefined) {
+        if (lib.zAxis) lib.zAxis.color.setHex(color_map.z);
+        if (lib.zAxisTransparent) lib.zAxisTransparent.color.setHex(color_map.z);
+      }
     },
 
     // Set clipping planes for an object (for proximity-based envelope visibility)
