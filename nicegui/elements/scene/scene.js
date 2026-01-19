@@ -409,6 +409,44 @@ export default {
           undefined,
           (error) => console.error(error)
         );
+      } else if (type == "stl") {
+        // Handle STL separately due to async loading
+        const url = args[0];
+        const wireframe = args[1];
+        mesh = new THREE.Group();
+        mesh._stlWireframe = wireframe;
+        mesh._stlPendingMaterial = null;
+        this.stl_loader.load(
+          url,
+          (loadedGeometry) => {
+            let child;
+            if (mesh._stlWireframe) {
+              child = new THREE.LineSegments(
+                new THREE.EdgesGeometry(loadedGeometry),
+                new THREE.LineBasicMaterial({ transparent: true })
+              );
+            } else {
+              child = new THREE.Mesh(
+                loadedGeometry,
+                new THREE.MeshPhongMaterial({ transparent: true })
+              );
+            }
+            // Apply any material properties that were set before load completed
+            if (mesh._stlPendingMaterial) {
+              const { color, opacity, side } = mesh._stlPendingMaterial;
+              if (color !== null && color !== undefined) {
+                const vertexColors = color === "vertex";
+                child.material.color.set(vertexColors ? "#ffffff" : color);
+                child.material.vertexColors = vertexColors;
+              }
+              if (opacity !== undefined) child.material.opacity = opacity;
+              if (side !== undefined) child.material.side = side;
+            }
+            mesh.add(child);
+          },
+          undefined,
+          (error) => console.error("STL load error:", error)
+        );
       } else if (type == "axes_helper") {
         mesh = new THREE.AxesHelper(args[0]);
         mesh.material.transparent = true;
@@ -439,11 +477,6 @@ export default {
           const settings = { depth: height, bevelEnabled: false };
           geometry = new THREE.ExtrudeGeometry(shape, settings);
         }
-        if (type == "stl") {
-          const url = args[0];
-          geometry = new THREE.BufferGeometry();
-          this.stl_loader.load(url, (geometry) => (mesh.geometry = geometry));
-        }
         let material;
         if (wireframe) {
           mesh = new THREE.LineSegments(
@@ -465,7 +498,34 @@ export default {
     },
     material(object_id, color, opacity, side) {
       if (!this.objects.has(object_id)) return;
-      const material = this.objects.get(object_id).material;
+      const obj = this.objects.get(object_id);
+
+      // Handle STL Group wrapper (async loaded)
+      if (obj._stlPendingMaterial !== undefined) {
+        // Convert side string to THREE constant
+        let sideValue = THREE.DoubleSide;
+        if (side == "front") sideValue = THREE.FrontSide;
+        else if (side == "back") sideValue = THREE.BackSide;
+
+        if (obj.children.length > 0) {
+          // STL has loaded - apply to child
+          const childMaterial = obj.children[0].material;
+          if (childMaterial) {
+            const vertexColors = color === null;
+            childMaterial.color.set(vertexColors ? "#ffffff" : color);
+            childMaterial.needsUpdate = childMaterial.vertexColors != vertexColors;
+            childMaterial.vertexColors = vertexColors;
+            childMaterial.opacity = opacity;
+            childMaterial.side = sideValue;
+          }
+        } else {
+          // STL still loading - store for later
+          obj._stlPendingMaterial = { color, opacity, side: sideValue };
+        }
+        return;
+      }
+
+      const material = obj.material;
       if (!material) return;
       const vertexColors = color === null;
       material.color.set(vertexColors ? "#ffffff" : color);
