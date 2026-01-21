@@ -1,9 +1,10 @@
 from itertools import accumulate, chain, repeat
 from typing import Literal, Optional, get_args
 
-from nicegui.elements.mixins.disableable_element import DisableableElement
-from nicegui.elements.mixins.value_element import ValueElement
-from nicegui.events import GenericEventArguments, Handler, ValueChangeEventArguments
+from ...defaults import DEFAULT_PROP, resolve_defaults
+from ...elements.mixins.disableable_element import DisableableElement
+from ...elements.mixins.value_element import ValueElement
+from ...events import GenericEventArguments, Handler, ValueChangeEventArguments
 
 SUPPORTED_LANGUAGES = Literal[
     "Angular Template",
@@ -255,16 +256,17 @@ class CodeMirror(
     VALUE_PROP = "value"
     LOOPBACK = None
 
+    @resolve_defaults
     def __init__(
         self,
         value: str = "",
         *,
         on_change: Optional[Handler[ValueChangeEventArguments]] = None,
-        language: Optional[SUPPORTED_LANGUAGES] = None,
-        theme: SUPPORTED_THEMES = "basicLight",
-        indent: str = " " * 4,
-        line_wrapping: bool = False,
-        highlight_whitespace: bool = False,
+        language: Optional[SUPPORTED_LANGUAGES] = DEFAULT_PROP | None,
+        theme: SUPPORTED_THEMES = DEFAULT_PROP | 'basicLight',
+        indent: str = DEFAULT_PROP | ' ' * 4,
+        line_wrapping: bool = DEFAULT_PROP | False,
+        highlight_whitespace: bool = DEFAULT_PROP | False,
         custom_completions: Optional[list[dict]] = None,
     ) -> None:
         """CodeMirror
@@ -295,14 +297,17 @@ class CodeMirror(
         if on_change is not None:
             super().on_value_change(on_change)
 
-        self._props["language"] = language
-        self._props["theme"] = theme
-        self._props["indent"] = indent
-        self._props["lineWrapping"] = line_wrapping
-        self._props["highlightWhitespace"] = highlight_whitespace
-        self._props["customCompletions"] = custom_completions or []
-        self._props["decorations"] = {}
-        self._update_method = "setEditorValueFromProps"
+        self._props['language'] = language
+        self._props['theme'] = theme
+        self._props['indent'] = indent
+        self._props['line-wrapping'] = line_wrapping
+        self._props['highlight-whitespace'] = highlight_whitespace
+        self._props['custom-completions'] = custom_completions or []
+        self._props['decorations'] = {}
+        self._update_method = 'setEditorValueFromProps'
+
+        self._props.add_rename('highlightWhitespace', 'highlight-whitespace')  # DEPRECATED: remove in NiceGUI 4.0
+        self._props.add_rename('lineWrapping', 'line-wrapping')  # DEPRECATED: remove in NiceGUI 4.0
 
     @property
     def theme(self) -> str:
@@ -346,27 +351,27 @@ class CodeMirror(
 
         *Added in version 3.2.0*
         """
-        return self._props["lineWrapping"]
+        return self._props['line-wrapping']
 
     @line_wrapping.setter
     def line_wrapping(self, value: bool) -> None:
-        self._props["lineWrapping"] = value
+        self._props['line-wrapping'] = value
 
     def set_line_wrapping(self, value: bool) -> None:
         """Sets whether line wrapping is enabled.
 
         *Added in version 3.2.0*
         """
-        self._props["lineWrapping"] = value
+        self._props['line-wrapping'] = value
 
     @property
     def custom_completions(self) -> list[dict]:
         """The current custom completions for the editor."""
-        return self._props.get("customCompletions", [])
+        return self._props.get('custom-completions', [])
 
     @custom_completions.setter
     def custom_completions(self, completions: Optional[list[dict]]) -> None:
-        self._props["customCompletions"] = completions or []
+        self._props['custom-completions'] = completions or []
 
     def set_completions(self, completions: Optional[list[dict]]) -> None:
         """Sets the custom completions for the editor.
@@ -378,7 +383,7 @@ class CodeMirror(
             - apply: The text to insert when selected (optional, defaults to label)
             - type: The type of completion for styling (optional, e.g., 'function', 'variable', 'class')
         """
-        self._props["customCompletions"] = completions or []
+        self._props['custom-completions'] = completions or []
 
     def set_decorations(
         self,
@@ -417,9 +422,9 @@ class CodeMirror(
             decorations: List of decoration specification dicts
             set_name: Named set for independent management (e.g., "diff", "errors")
         """
-        current = dict(self._props.get("decorations", {}))
+        current = dict(self._props.get('decorations', {}))
         current[set_name] = decorations
-        self._props["decorations"] = current
+        self._props['decorations'] = current
 
     def clear_decorations(self, set_name: str | None = None) -> None:
         """Clear decorations.
@@ -428,11 +433,11 @@ class CodeMirror(
             set_name: Clear only this named set, or all decorations if None
         """
         if set_name is None:
-            self._props["decorations"] = {}
+            self._props['decorations'] = {}
         else:
-            current = dict(self._props.get("decorations", {}))
+            current = dict(self._props.get('decorations', {}))
             current.pop(set_name, None)
-            self._props["decorations"] = current
+            self._props['decorations'] = current
 
     def highlight_lines(
         self,

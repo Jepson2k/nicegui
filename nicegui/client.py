@@ -7,7 +7,7 @@ import uuid
 from collections import defaultdict
 from collections.abc import Awaitable, Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, ClassVar
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, cast
 
 from fastapi import Request
 from fastapi.responses import Response
@@ -81,9 +81,13 @@ class Client:
         self._deleted = False
         self._socket_to_document_id: dict[str, str] = {}
         self.tab_id: str | None = None
+        self._exception_handlers: list[Callable[[Exception], Any] | Callable[[], Any]] = []
 
         self.page = page
         self.outbox = Outbox(self)
+
+        if self._request is not None:
+            self._request.scope['nicegui_page_path'] = self.page.path
 
         with Element('q-layout', _client=self).props('view="hhh lpr fff"').classes('nicegui-layout') as self.layout:
             with Element('q-page-container') as self.page_container:
@@ -282,6 +286,13 @@ class Client:
         """
         self.delete_handlers.append(handler)
 
+    def on_exception(self, handler: Callable[[Exception], Any] | Callable[[], Any]) -> None:
+        """Add a callback to be invoked for in-page exceptions (after the page has been sent to the browser).
+
+        The callback has an optional parameter of `Exception`.
+        """
+        self._exception_handlers.append(handler)
+
     def handle_handshake(self, socket_id: str, document_id: str, next_message_id: int | None) -> None:
         """Cancel pending disconnect task and invoke connect handlers."""
         self._waiting_for_connection.clear()
@@ -304,6 +315,7 @@ class Client:
         document_id = self._socket_to_document_id.pop(socket_id)
         self._cancel_delete_task(document_id)
         self._num_connections[document_id] -= 1
+        tab_id_to_close = self.tab_id
         self.tab_id = None
 
         for t in self.disconnect_handlers:
@@ -316,6 +328,7 @@ class Client:
             if self._num_connections[document_id] == 0:
                 self._num_connections.pop(document_id)
                 self._delete_tasks.pop(document_id)
+                await core.app.storage.close_tab(tab_id_to_close)
                 self.delete()
         self._delete_tasks[document_id] = \
             background_tasks.create(delete_content(), name=f'delete content {document_id}')
@@ -372,6 +385,20 @@ class Client:
         """Remove all elements from the client."""
         self.remove_elements(self.elements.values())
 
+    def handle_exception(self, exception: Exception) -> None:
+        """Handle an in-page exception by invoking handlers registered via `ui.on_exception(...)`."""
+        for handler in self._exception_handlers:
+            with self.content:
+                if helpers.expects_arguments(handler):
+                    result = cast(Callable[[Exception], Any], handler)(exception)
+                else:
+                    result = cast(Callable[[], Any], handler)()
+            if helpers.is_coroutine_function(handler):
+                async def wait_for_result(result: Any = result) -> None:
+                    with self.content:
+                        await result
+                background_tasks.create(wait_for_result(), name=f'UI exception {handler.__name__}')
+
     def delete(self) -> None:
         """Delete a client and all its elements.
 
@@ -388,6 +415,8 @@ class Client:
         self.outbox.stop()
         del Client.instances[self.id]
         self._deleted = True
+        self._connected.set()  # for terminating connected() waits
+        self._connected.clear()
 
     def check_existence(self) -> None:
         """Check if the client still exists and print a warning if it doesn't."""

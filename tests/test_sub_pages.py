@@ -980,9 +980,12 @@ def test_on_path_changed_event(screen: Screen):
 
 
 def test_exception_in_page_builder(screen: Screen):
+    exceptions = []
+
     @ui.page('/')
     @ui.page('/{_:path}')
     def index():
+        ui.on_exception(exceptions.append)
         ui.link('Go to exception', '/')
         ui.link('Go to content with exception', '/content_with_exception')
         ui.link('Go to async exception', '/async')
@@ -1027,6 +1030,8 @@ def test_exception_in_page_builder(screen: Screen):
     screen.should_contain(f'500: {msg_content}')
     screen.assert_py_logger('ERROR', msg_content)
     screen.should_not_contain('content before exception')
+
+    assert len(exceptions) == 4
 
 
 def test_disabling_404(screen: Screen):
@@ -1284,3 +1289,26 @@ def test_query_parameters_wildcard_routing(screen: Screen):
 
     screen.open('/sub/x/2/a?color=blue')
     screen.should_contain('query_parameters: color=blue')
+
+
+def test_sub_pages_against_xss_by_fragment(screen: Screen):
+    @ui.page('/')
+    @ui.page('/{_:path}')
+    def index():
+        ui.sub_pages({'/': lambda: ui.label('main page')})
+
+    screen.open('/')
+    screen.open('''/#x');console.error('XSS')//''')
+    assert 'XSS' not in screen.render_js_logs()
+
+
+def test_sub_pages_against_xss_by_path(screen: Screen):
+    @ui.page('/')
+    @ui.page('/{_:path}')
+    def index():
+        ui.sub_pages({'/': lambda: ui.link('Go to XSS', '/"+console.error("XSS")+"')})
+
+    screen.open('/')
+    screen.click('Go to XSS')
+    screen.wait(1)
+    assert 'XSS' not in screen.render_js_logs()

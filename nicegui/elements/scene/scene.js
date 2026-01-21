@@ -83,7 +83,7 @@ export default {
     this.is_initialized = false;
     this.dragging_count = 0; // Reference count for TransformControls dragging - only enable orbit when 0
 
-    if (this.show_stats) {
+    if (this.showStats) {
       this.stats = new Stats();
       this.stats.domElement.style.position = "absolute";
       this.stats.domElement.style.top = "0px";
@@ -92,21 +92,21 @@ export default {
 
     window["scene_" + this.$el.id] = this.scene; // NOTE: for selenium tests only
 
-    if (this.camera_type === "perspective") {
+    if (this.cameraType === "perspective") {
       this.camera = new THREE.PerspectiveCamera(
-        this.camera_params.fov,
+        this.cameraParams.fov,
         this.width / this.height,
-        this.camera_params.near,
-        this.camera_params.far
+        this.cameraParams.near,
+        this.cameraParams.far
       );
     } else {
       this.camera = new THREE.OrthographicCamera(
-        (-this.camera_params.size / 2) * (this.width / this.height),
-        (this.camera_params.size / 2) * (this.width / this.height),
-        this.camera_params.size / 2,
-        -this.camera_params.size / 2,
-        this.camera_params.near,
-        this.camera_params.far
+        (-this.cameraParams.size / 2) * (this.width / this.height),
+        (this.cameraParams.size / 2) * (this.width / this.height),
+        this.cameraParams.size / 2,
+        -this.cameraParams.size / 2,
+        this.cameraParams.near,
+        this.cameraParams.far
       );
     }
     this.look_at = new THREE.Vector3(0, 0, 0);
@@ -136,7 +136,7 @@ export default {
       this.$el.style.border = "1px solid silver";
       return;
     }
-    this.renderer.setClearColor(this.background_color);
+    this.renderer.setClearColor(this.backgroundColor);
     this.renderer.setSize(this.width, this.height);
 
     this.text_renderer = new CSS2DRenderer({
@@ -157,16 +157,16 @@ export default {
     window.addEventListener("DOMContentLoaded", this.resize, false);
 
     // Create polar or rectangular grid depending on props (mutually exclusive, polar takes precedence)
-    if (this.polar_grid) {
-      // polar_grid is [radius, sectors, rings]
-      const radius = this.polar_grid[0] || 1.0;
-      const sectors = this.polar_grid[1] || 10;
-      const rings = this.polar_grid[2] || 10;
+    if (this.polarGrid) {
+      // polarGrid is [radius, sectors, rings]
+      const radius = this.polarGrid[0] || 1.0;
+      const sectors = this.polarGrid[1] || 10;
+      const rings = this.polarGrid[2] || 10;
       
       // Create circular ground plane
       const ground = new THREE.Mesh(
         new THREE.CircleGeometry(radius, 64),
-        new THREE.MeshPhongMaterial({ color: this.background_color })
+        new THREE.MeshPhongMaterial({ color: this.backgroundColor })
       );
       ground.translateZ(-0.01);
       ground.object_id = "ground";
@@ -183,7 +183,7 @@ export default {
       const gridDivisions = this.grid[1] || 100;
       const ground = new THREE.Mesh(
         new THREE.PlaneGeometry(gridSize, gridSize),
-        new THREE.MeshPhongMaterial({ color: this.background_color })
+        new THREE.MeshPhongMaterial({ color: this.backgroundColor })
       );
       ground.translateZ(-0.01);
       ground.object_id = "ground";
@@ -204,7 +204,7 @@ export default {
       position[variable] = eval(expression.replace(/x|y|z/g, (match) => `(${position[match]})`));
     };
     const handleDrag = (event) => {
-      this.drag_constraints.split(",").forEach((constraint) => applyConstraint(constraint, event.object.position));
+      this.dragConstraints.split(",").forEach((constraint) => applyConstraint(constraint, event.object.position));
       this.$emit(event.type, {
         type: event.type,
         object_id: event.object.object_id,
@@ -330,7 +330,7 @@ export default {
         offset_y: mouseEvent.offsetY,
       });
     };
-    this.click_events.forEach((event) => this.$el.addEventListener(event, click_handler));
+    this.clickEvents.forEach((event) => this.$el.addEventListener(event, click_handler));
 
     this.texture_loader = new THREE.TextureLoader();
     this.stl_loader = new STLLoader();
@@ -1051,9 +1051,9 @@ export default {
       this.text_renderer.setSize(clientWidth, clientHeight);
       this.text3d_renderer.setSize(clientWidth, clientHeight);
       this.camera.aspect = clientWidth / clientHeight;
-      if (this.camera_type === "orthographic") {
-        this.camera.left = (-this.camera.aspect * this.camera_params.size) / 2;
-        this.camera.right = (this.camera.aspect * this.camera_params.size) / 2;
+      if (this.cameraType === "orthographic") {
+        this.camera.left = (-this.camera.aspect * this.cameraParams.size) / 2;
+        this.camera.right = (this.camera.aspect * this.cameraParams.size) / 2;
       }
       this.camera.updateProjectionMatrix();
     },
@@ -1096,13 +1096,13 @@ export default {
     width: Number,
     height: Number,
     grid: Object,
-    polar_grid: Array,
-    camera_type: String,
-    camera_params: Object,
-    click_events: Array,
-    drag_constraints: String,
-    background_color: String,
+    polarGrid: Array,
+    cameraType: String,
+    cameraParams: Object,
+    clickEvents: Array,
+    dragConstraints: String,
+    backgroundColor: String,
     fps: Number,
-    show_stats: Boolean,
+    showStats: Boolean,
   },
 };
