@@ -46,6 +46,7 @@ class FilePersistentDict(PersistentDict):
 
         @background_tasks.await_on_shutdown
         async def async_backup() -> None:
+            self.filepath.parent.mkdir(exist_ok=True)
             async with aiofiles.open(self.filepath, 'w', encoding=self.encoding) as f:
                 await f.write(json.dumps(self, indent=self.indent))
 
