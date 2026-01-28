@@ -26,6 +26,7 @@ bindings: defaultdict[tuple[int, str], list[tuple[Any, Any, str, Callable[[Any],
 bindable_properties: weakref.WeakValueDictionary[tuple[int, str], Any] = weakref.WeakValueDictionary()
 active_links: list[tuple[Any, str, Any, str, Callable[[Any], Any] | None]] = []
 _active_links_added = asyncio.Event()
+_binding_lock = asyncio.Lock()
 
 TC = TypeVar('TC', bound=type)
 T = TypeVar('T')
@@ -238,11 +239,29 @@ class BindableProperty:
             self._change_handler(owner, value)
 
 
-def remove(objects: Iterable[Any]) -> None:
-    """Remove all bindings that involve the given objects.
+def _snapshot_bindable_properties() -> list[tuple[int, str]]:
+    """Safely snapshot bindable_properties keys with retry on GC race."""
+    for _ in range(3):
+        try:
+            return list(bindable_properties)
+        except RuntimeError:
+            # Dictionary changed during iteration (GC collected a weak ref)
+            continue
+    # Final attempt without catching - let it raise if still failing
+    return list(bindable_properties)
+
+
+async def remove_async(objects: Iterable[Any]) -> None:
+    """Remove all bindings that involve the given objects (async version with lock).
 
     :param objects: The objects to remove.
     """
+    async with _binding_lock:
+        _remove_impl(objects)
+
+
+def _remove_impl(objects: Iterable[Any]) -> None:
+    """Core implementation of binding removal."""
     object_ids = set(map(id, objects))
     active_links[:] = [
         (source_obj, source_name, target_obj, target_name, transform)
@@ -257,9 +276,20 @@ def remove(objects: Iterable[Any]) -> None:
         ]
         if not binding_list:
             del bindings[key]
-    for obj_id, name in list(bindable_properties):
+    for obj_id, name in _snapshot_bindable_properties():
         if obj_id in object_ids:
-            del bindable_properties[(obj_id, name)]
+            try:
+                del bindable_properties[(obj_id, name)]
+            except KeyError:
+                pass  # Already removed by GC or concurrent operation
+
+
+def remove(objects: Iterable[Any]) -> None:
+    """Remove all bindings that involve the given objects.
+
+    :param objects: The objects to remove.
+    """
+    _remove_impl(list(objects))
 
 
 def reset() -> None:
