@@ -54,8 +54,8 @@ export default {
         for (const alias of [language.name, ...language.alias])
           if (name.toLowerCase() === alias.toLowerCase()) return language;
 
-      console.error(`Language not found: ${this.language}`);
-      console.info("Supported language names:", languages.map((lang) => lang.name).join(", "));
+      console.error(`Language not found: ${name}`);
+      console.info("Supported language names:", this.languages.map((lang) => lang.name).join(", "));
       return null;
     },
     // Get the names of all supported languages
@@ -137,10 +137,9 @@ export default {
 
       if (lineDecorations.length === 0) return;
 
-      // Apply decorations using internal _highlight set
-      const current = { ...(this.decorations || {}) };
-      current._highlight = lineDecorations;
-      this.setDecorations(current);
+      // Track highlight state locally (independent of prop-driven decorations)
+      this._jsHighlight = lineDecorations;
+      this._applyAllDecorations();
 
       // Scroll first line into view
       const firstLineNum = Math.min(...lineIndices) + 1;
@@ -153,10 +152,10 @@ export default {
 
       // Auto-remove after duration
       if (durationMs > 0) {
-        setTimeout(() => {
-          const updated = { ...(this.decorations || {}) };
-          delete updated._highlight;
-          this.setDecorations(updated);
+        clearTimeout(this._highlightTimer);
+        this._highlightTimer = setTimeout(() => {
+          this._jsHighlight = null;
+          this._applyAllDecorations();
         }, durationMs);
       }
     },
@@ -210,9 +209,20 @@ export default {
       });
     },
     setDecorations(decorationSets) {
+      // Prop-driven path — store and merge with JS-local state
+      this._propDecorations = decorationSets;
+      this._applyAllDecorations();
+    },
+    _applyAllDecorations() {
       if (!this.editor || !this.decorationsConfig) return;
 
-      if (!decorationSets || Object.keys(decorationSets).length === 0) {
+      // Merge prop-driven decoration sets with JS-local highlight
+      const merged = { ...(this._propDecorations || {}) };
+      if (this._jsHighlight) {
+        merged._highlight = this._jsHighlight;
+      }
+
+      if (Object.keys(merged).length === 0) {
         this.editor.dispatch({
           effects: this.decorationsConfig.reconfigure([]),
         });
@@ -220,24 +230,18 @@ export default {
       }
 
       const allDecorations = [];
-      for (const specs of Object.values(decorationSets)) {
+      for (const specs of Object.values(merged)) {
         for (const spec of specs) {
           const dec = this.createDecoration(spec);
           if (dec) allDecorations.push(dec);
         }
       }
 
-      // Sort by position (required by CM6)
-      allDecorations.sort((a, b) => a.from - b.from);
-
       const decorationSet = CM.Decoration.set(allDecorations, true);
       const decorationExtension = CM.EditorView.decorations.of(decorationSet);
 
       this.editor.dispatch({
-        effects: this.decorationsConfig.reconfigure([
-          decorationExtension,
-          this.getDecorationStyles(),
-        ]),
+        effects: this.decorationsConfig.reconfigure([decorationExtension]),
       });
     },
     createDecoration(spec) {
@@ -263,27 +267,6 @@ export default {
       }
       return null;
     },
-    getDecorationStyles() {
-      return CM.EditorView.baseTheme({
-        ".cm-diff-added": {
-          backgroundColor: "rgba(0, 255, 0, 0.2)",
-          borderRadius: "2px",
-        },
-        ".cm-diff-deleted": {
-          backgroundColor: "rgba(255, 0, 0, 0.2)",
-          textDecoration: "line-through",
-        },
-        ".cm-diff-line-added": {
-          backgroundColor: "rgba(0, 255, 0, 0.1)",
-        },
-        ".cm-diff-line-deleted": {
-          backgroundColor: "rgba(255, 0, 0, 0.1)",
-        },
-        ".cm-highlighted": {
-          backgroundColor: "rgba(255, 255, 0, 0.3)",
-        },
-      });
-    },
     setupExtensions() {
       const self = this;
 
@@ -302,9 +285,26 @@ export default {
         }
       );
 
+      // Cursor line tracker — emits 1-indexed line number on cursor movement (debounced)
+      let _cursorTimer = null;
+      const cursorTracker = CM.ViewPlugin.fromClass(
+        class {
+          constructor() { this._lastLine = 0; }
+          update(update) {
+            if (!update.selectionSet && !update.docChanged) return;
+            const line = update.state.doc.lineAt(update.state.selection.main.head).number;
+            if (line === this._lastLine) return;
+            this._lastLine = line;
+            if (_cursorTimer) clearTimeout(_cursorTimer);
+            _cursorTimer = setTimeout(() => self.$emit("cursor-line", { line }), 100);
+          }
+        }
+      );
+
       const extensions = [
         CM.basicSetup,
         changeSender,
+        cursorTracker,
         // Enables the Tab key to indent the current lines https://codemirror.net/examples/tab/
         CM.keymap.of([CM.indentWithTab]),
         // Sets indentation https://codemirror.net/docs/ref/#language.indentUnit
@@ -319,6 +319,26 @@ export default {
         CM.EditorView.theme({
           "&": { height: "100%" },
           ".cm-scroller": { overflow: "auto" },
+        }),
+        // Static decoration styles (installed once, not per-update)
+        CM.EditorView.baseTheme({
+          ".cm-diff-added": {
+            backgroundColor: "rgba(0, 255, 0, 0.2)",
+            borderRadius: "2px",
+          },
+          ".cm-diff-deleted": {
+            backgroundColor: "rgba(255, 0, 0, 0.2)",
+            textDecoration: "line-through",
+          },
+          ".cm-diff-line-added": {
+            backgroundColor: "rgba(0, 255, 0, 0.1)",
+          },
+          ".cm-diff-line-deleted": {
+            backgroundColor: "rgba(255, 0, 0, 0.1)",
+          },
+          ".cm-highlighted": {
+            backgroundColor: "rgba(255, 255, 0, 0.3)",
+          },
         }),
       ];
 
@@ -358,6 +378,13 @@ export default {
     this.setLineWrapping(this.lineWrapping);
     if (this.customCompletions) {
       this.setCustomCompletions(this.customCompletions);
+    }
+  },
+  beforeUnmount() {
+    clearTimeout(this._highlightTimer);
+    if (this.editor) {
+      this.editor.destroy();
+      this.editor = null;
     }
   },
 };

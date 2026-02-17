@@ -262,6 +262,7 @@ class CodeMirror(
         value: str = "",
         *,
         on_change: Optional[Handler[ValueChangeEventArguments]] = None,
+        on_cursor_line: Optional[Handler[GenericEventArguments]] = None,
         language: Optional[SUPPORTED_LANGUAGES] = DEFAULT_PROP | None,
         theme: SUPPORTED_THEMES = DEFAULT_PROP | 'basicLight',
         indent: str = DEFAULT_PROP | ' ' * 4,
@@ -283,6 +284,7 @@ class CodeMirror(
 
         :param value: initial value of the editor (default: "")
         :param on_change: callback to be executed when the value changes (default: `None`)
+        :param on_cursor_line: callback when the cursor moves to a different line; receives ``e.args["line"]`` (1-indexed)
         :param language: initial language of the editor (case-insensitive, default: `None`)
         :param theme: initial theme of the editor (default: "basicLight")
         :param indent: string to use for indentation (any string consisting entirely of the same whitespace character, default: "    ")
@@ -296,6 +298,8 @@ class CodeMirror(
         self._update_codepoints()
         if on_change is not None:
             super().on_value_change(on_change)
+        if on_cursor_line is not None:
+            self.on("cursor-line", on_cursor_line)
 
         self._props['language'] = language
         self._props['theme'] = theme
