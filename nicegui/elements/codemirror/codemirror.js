@@ -296,7 +296,7 @@ export default {
             if (line === this._lastLine) return;
             this._lastLine = line;
             if (_cursorTimer) clearTimeout(_cursorTimer);
-            _cursorTimer = setTimeout(() => self.$emit("cursor-line", { line }), 100);
+            _cursorTimer = setTimeout(() => self.$emit("cursor-line", { line }), 30);
           }
         }
       );
