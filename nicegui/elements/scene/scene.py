@@ -44,6 +44,7 @@ class SceneObject:
 
 class Scene(Element, component="scene.js", esm={"nicegui-scene": "dist"}, default_classes="nicegui-scene"):
     # pylint: disable=import-outside-toplevel
+    from .scene_objects import ArrowHelper as arrow_helper
     from .scene_objects import AxesHelper as axes_helper
     from .scene_objects import Box as box
     from .scene_objects import Curve as curve

@@ -465,6 +465,10 @@ export default {
       } else if (type == "axes_helper") {
         mesh = new THREE.AxesHelper(args[0]);
         mesh.material.transparent = true;
+      } else if (type == "arrow_helper") {
+        const dir = new THREE.Vector3(...args[0]).normalize();
+        const origin = new THREE.Vector3(...args[1]);
+        mesh = new THREE.ArrowHelper(dir, origin, args[2], 0xffffff, args[3], args[4]);
       } else {
         let geometry;
         const wireframe = args.pop();
@@ -536,6 +540,20 @@ export default {
         } else {
           // STL still loading - store for later
           obj._stlPendingMaterial = { color, opacity, side: sideValue };
+        }
+        return;
+      }
+
+      // Handle ArrowHelper (composed of line + cone children)
+      if (obj.isArrowHelper) {
+        obj.setColor(color || "#ffffff");
+        if (obj.line && obj.line.material) {
+          obj.line.material.opacity = opacity;
+          obj.line.material.transparent = true;
+        }
+        if (obj.cone && obj.cone.material) {
+          obj.cone.material.opacity = opacity;
+          obj.cone.material.transparent = true;
         }
         return;
       }

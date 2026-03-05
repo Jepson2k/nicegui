@@ -360,6 +360,35 @@ class AxesHelper(Object3D):
         super().__init__("axes_helper", length)
 
 
+class ArrowHelper(Object3D):
+    def __init__(
+        self,
+        direction: list[float],
+        origin: list[float] | None = None,
+        length: float = 1.0,
+        head_length: float | None = None,
+        head_width: float | None = None,
+    ) -> None:
+        """Arrow Helper
+
+        This element is based on Three.js' `ArrowHelper <https://threejs.org/docs/#api/en/helpers/ArrowHelper>`_.
+        It renders an arrow pointing in a given direction.
+
+        :param direction: direction vector (will be normalized)
+        :param origin: start point of the arrow (default: [0, 0, 0])
+        :param length: length of the arrow (default: 1.0)
+        :param head_length: length of the arrow head (default: 20% of length)
+        :param head_width: width of the arrow head (default: 20% of head_length)
+        """
+        if origin is None:
+            origin = [0, 0, 0]
+        if head_length is None:
+            head_length = length * 0.2
+        if head_width is None:
+            head_width = head_length * 0.2
+        super().__init__("arrow_helper", direction, origin, length, head_length, head_width)
+
+
 class PolarGridHelper(Object3D):
     def __init__(
         self,
