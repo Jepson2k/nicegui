@@ -5,14 +5,13 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 from typing_extensions import Self
 
 from nicegui import background_tasks, events, ui
-from nicegui.element import Element
 from nicegui.elements.mixins.disableable_element import DisableableElement
 from nicegui.elements.mixins.value_element import ValueElement
 
 if TYPE_CHECKING:
     from .user import User
 
-T = TypeVar('T', bound=Element)
+T = TypeVar('T', bound=ui.element)
 
 
 class UserInteraction(Generic[T]):
@@ -64,8 +63,13 @@ class UserInteraction(Generic[T]):
             for element in self.elements:
                 if isinstance(element, DisableableElement) and not element.enabled:
                     continue
-                assert isinstance(element, (ui.input, ui.editor, ui.codemirror))
-                element.value = (element.value or '') + text
+                if isinstance(element, ui.number):
+                    current = element._value_to_model_value(element.value) or ''  # pylint: disable=protected-access
+                    element.value = float(current + text)
+                elif isinstance(element, (ui.input, ui.editor, ui.codemirror)):
+                    element.value = (element.value or '') + text
+                else:
+                    raise TypeError(f'Element of type {type(element)} does not support typing')
         return self
 
     def click(self) -> Self:

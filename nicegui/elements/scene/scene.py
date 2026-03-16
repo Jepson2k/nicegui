@@ -1,11 +1,11 @@
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, Optional, Union
+from typing import Any, Literal
 
 from typing_extensions import Self
 
 from ... import binding
-from ...dataclasses import KWONLY_SLOTS
 from ...defaults import DEFAULT_PROP, resolve_defaults
 from ...element import Element
 from ...events import (
@@ -22,7 +22,7 @@ from ...events import (
 from .scene_object3d import Object3D
 
 
-@dataclass(**KWONLY_SLOTS)
+@dataclass(kw_only=True, slots=True)
 class SceneCamera:
     type: Literal["perspective", "orthographic"]
     params: dict[str, float]
@@ -37,7 +37,7 @@ class SceneCamera:
     up_z: float = 1
 
 
-@dataclass(**KWONLY_SLOTS)
+@dataclass(kw_only=True, slots=True)
 class SceneObject:
     id: str = "scene"
 
@@ -64,26 +64,26 @@ class Scene(Element, component="scene.js", esm={"nicegui-scene": "dist"}, defaul
     from .scene_objects import Texture as texture
 
     @resolve_defaults
-    def __init__(
-        self,
-        width: int = DEFAULT_PROP | 400,
-        height: int = DEFAULT_PROP | 300,
-        # DEPRECATED: enforce keyword-only arguments in NiceGUI 4.0
-        grid: Union[bool, tuple[int, int]] = DEFAULT_PROP | True,
-        polar_grid: Optional[tuple[float, int, int]] = None,
-        camera: Optional[SceneCamera] = None,
-        on_click: Optional[Handler[SceneClickEventArguments]] = None,
-        click_events: list[str] = DEFAULT_PROP | ['click', 'dblclick'],
-        on_drag_start: Optional[Handler[SceneDragEventArguments]] = None,
-        on_drag_end: Optional[Handler[SceneDragEventArguments]] = None,
-        on_transform: Optional[Handler[SceneTransformEventArguments]] = None,
-        on_transform_start: Optional[Handler[SceneTransformEventArguments]] = None,
-        on_transform_end: Optional[Handler[SceneTransformEventArguments]] = None,
-        drag_constraints: str = DEFAULT_PROP | '',
-        background_color: str = DEFAULT_PROP | '#eee',
-        fps: int = DEFAULT_PROP | 20,
-        show_stats: bool = DEFAULT_PROP | False,
-    ) -> None:
+    def __init__(self,
+                 width: int = DEFAULT_PROP | 400,
+                 height: int = DEFAULT_PROP | 300,
+                 # DEPRECATED: enforce keyword-only arguments in NiceGUI 4.0
+                 grid: bool | tuple[int, int] = DEFAULT_PROP | True,
+                 polar_grid: tuple[float, int, int] | None = None,
+                 camera: SceneCamera | None = None,
+                 on_click: Handler[SceneClickEventArguments] | None = None,
+                 click_events: list[str] = DEFAULT_PROP | ['click', 'dblclick'],
+                 on_drag_start: Handler[SceneDragEventArguments] | None = None,
+                 on_drag_end: Handler[SceneDragEventArguments] | None = None,
+                 on_transform: Handler[SceneTransformEventArguments] | None = None,
+                 on_transform_start: Handler[SceneTransformEventArguments] | None = None,
+                 on_transform_end: Handler[SceneTransformEventArguments] | None = None,
+                 drag_constraints: str = DEFAULT_PROP | '',
+                 background_color: str = DEFAULT_PROP | '#eee',
+                 control_type: Literal['orbit', 'trackball', 'map'] = DEFAULT_PROP | 'orbit',
+                 fps: int = DEFAULT_PROP | 20,
+                 show_stats: bool = DEFAULT_PROP | False,
+                 ) -> None:
         """3D Scene
 
         Display a 3D scene using `three.js <https://threejs.org/>`_.
@@ -105,6 +105,7 @@ class Scene(Element, component="scene.js", esm={"nicegui-scene": "dist"}, defaul
         :param on_transform_end: callback to execute when TransformControls gizmo interaction ends
         :param drag_constraints: comma-separated JavaScript expression for constraining positions of dragged objects (e.g. ``'x = 0, z = y / 2'``)
         :param background_color: background color of the scene (default: "#eee")
+        :param control_type: type of controls to use for navigating the scene, one of "orbit", "trackball", "map" (default: "orbit", *added in version 3.9.0*)
         :param fps: target frame rate for the scene in frames per second (default: 20, *added in version 3.2.0*)
         :param show_stats: whether to show performance stats (default: ``False``, *added in version 3.2.0*)
         """
@@ -120,7 +121,7 @@ class Scene(Element, component="scene.js", esm={"nicegui-scene": "dist"}, defaul
         self._props['camera-type'] = self.camera.type
         self._props['camera-params'] = self.camera.params
         self.objects: dict[str, Object3D] = {}
-        self.stack: list[Union[Object3D, SceneObject]] = [SceneObject()]
+        self.stack: list[Object3D | SceneObject] = [SceneObject()]
         self._click_handlers = [on_click] if on_click else []
         self._props['click-events'] = click_events[:]
         self._drag_start_handlers = [on_drag_start] if on_drag_start else []
@@ -140,6 +141,7 @@ class Scene(Element, component="scene.js", esm={"nicegui-scene": "dist"}, defaul
         self.on('transform_start', self._handle_transform)
         self.on('transform_end', self._handle_transform)
         self._props['drag-constraints'] = drag_constraints
+        self._props['control-type'] = control_type
 
         self._props.add_rename('background_color', 'background-color')  # DEPRECATED: remove in NiceGUI 4.0
         self._props.add_rename('camera_params', 'camera-params')  # DEPRECATED: remove in NiceGUI 4.0
@@ -319,8 +321,8 @@ class Scene(Element, component="scene.js", esm={"nicegui-scene": "dist"}, defaul
         self,
         object_id: str,
         mode: Literal["translate", "rotate", "scale"] = "translate",
-        size: Optional[float] = None,
-        visible_axes: Optional[list[Literal["X", "Y", "Z"]]] = None,
+        size: float | None = None,
+        visible_axes: list[Literal["X", "Y", "Z"]] | None = None,
     ) -> None:
         """Enable TransformControls gizmo on an object.
 
@@ -451,19 +453,17 @@ class Scene(Element, component="scene.js", esm={"nicegui-scene": "dist"}, defaul
     def __len__(self) -> int:
         return len(self.objects)
 
-    def move_camera(
-        self,
-        x: Optional[float] = None,
-        y: Optional[float] = None,
-        z: Optional[float] = None,
-        look_at_x: Optional[float] = None,
-        look_at_y: Optional[float] = None,
-        look_at_z: Optional[float] = None,
-        up_x: Optional[float] = None,
-        up_y: Optional[float] = None,
-        up_z: Optional[float] = None,
-        duration: float = 0.5,
-    ) -> None:
+    def move_camera(self,
+                    x: float | None = None,
+                    y: float | None = None,
+                    z: float | None = None,
+                    look_at_x: float | None = None,
+                    look_at_y: float | None = None,
+                    look_at_z: float | None = None,
+                    up_x: float | None = None,
+                    up_y: float | None = None,
+                    up_z: float | None = None,
+                    duration: float = 0.5) -> None:
         """Move the camera to a new position.
 
         :param x: camera x position

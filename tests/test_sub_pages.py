@@ -1,5 +1,4 @@
 import asyncio
-from typing import Optional
 
 import httpx
 import pytest
@@ -788,7 +787,7 @@ def test_optional_parameters(screen: Screen):
         name: str,
         count: int = 1,
         active: str = 'no',
-        source: Optional[str] = None,
+        source: str | None = None,
         missing: str = 'default',
     ):
         ui.label(f'name={name}, count={count}, active={active}, source={source}, missing={missing}')
@@ -814,7 +813,7 @@ def test_page_arguments_with_optional_parameters(screen: Screen):
         args: PageArguments,
         user_id: str,
         role: str = 'guest',
-        app_name: Optional[str] = None,
+        app_name: str | None = None,
     ):
         ui.label(f'path={args.path}, user_id={user_id}, role={role}, app={app_name}')
 
@@ -1312,3 +1311,27 @@ def test_sub_pages_against_xss_by_path(screen: Screen):
     screen.click('Go to XSS')
     screen.wait(1)
     assert 'XSS' not in screen.render_js_logs()
+
+
+def test_sub_pages_navigation_with_header(screen: Screen):
+    # regression test for #5816
+    @ui.page('/')
+    @ui.page('/{_:path}')
+    def index():
+        with ui.header():
+            ui.link('Index', '/')
+            ui.link('Other', '/other')
+
+        ui.sub_pages({
+            '/': lambda: ui.label('Index page'),
+            '/other': lambda: ui.label('Other page'),
+        })
+
+    screen.open('/')
+    screen.should_contain('Index page')
+
+    screen.click('Other')
+    screen.should_contain('Other page')
+
+    screen.click('Index')
+    screen.should_contain('Index page')

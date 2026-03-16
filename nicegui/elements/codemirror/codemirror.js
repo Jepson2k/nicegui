@@ -14,6 +14,7 @@ export default {
     highlightWhitespace: Boolean,
     customCompletions: Array,
     decorations: Object,
+    id: String,
   },
   watch: {
     language(newLanguage) {
@@ -46,6 +47,12 @@ export default {
         this.resolveEditor = resolve;
       }),
     };
+  },
+  beforeUnmount() {
+    if (this.editor) {
+      const element = mounted_app.elements[this.$props.id.slice(1)];
+      if (element) element.props.value = this.editor.state.doc.toString();
+    }
   },
   methods: {
     // Find the language's extension by its name. Case insensitive.
@@ -107,10 +114,22 @@ export default {
     },
     setEditorValue(value) {
       if (!this.editor) return;
-      if (this.editor.state.doc.toString() === value) return;
+      const old = this.editor.state.doc.toString();
+      if (old === value) return;
+
+      // Find the changed region so we only replace what differs.
+      // This preserves cursor positions and selections outside the change.
+      let start = 0;
+      while (start < old.length && start < value.length && old[start] === value[start]) start++;
+      let oldEnd = old.length;
+      let newEnd = value.length;
+      while (oldEnd > start && newEnd > start && old[oldEnd - 1] === value[newEnd - 1]) {
+        oldEnd--;
+        newEnd--;
+      }
 
       this.emitting = false;
-      this.editor.dispatch({ changes: { from: 0, to: this.editor.state.doc.length, insert: value } });
+      this.editor.dispatch({ changes: { from: start, to: oldEnd, insert: value.slice(start, newEnd) } });
       this.emitting = true;
     },
     setDisabled(disabled) {
@@ -282,7 +301,7 @@ export default {
             if (!self.emitting) return;
             self.$emit("update:value", update.changes);
           }
-        }
+        },
       );
 
       // Cursor line tracker — emits 1-indexed line number on cursor movement (debounced)

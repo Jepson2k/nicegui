@@ -1,6 +1,8 @@
 import weakref
+from typing import Literal
 
 import numpy as np
+import pytest
 from selenium.common.exceptions import JavascriptException
 
 from nicegui import app, ui
@@ -421,3 +423,17 @@ def test_ground_point_in_click_event(screen: Screen):
     # Ground point should be captured (Z should be 0 since it's ground plane intersection)
     assert len(ground_points) >= 1
     assert ground_points[0][2] == 0.0  # Z coordinate should be 0 for ground plane
+
+
+@pytest.mark.parametrize('control_type,constructor', [('map', 'MapControls'), ('trackball', 'TrackballControls')])
+def test_custom_controls(screen: Screen, control_type: Literal['map', 'trackball'], constructor: str):
+    scene = None
+
+    @ui.page('/')
+    def page():
+        nonlocal scene
+        scene = ui.scene(control_type=control_type)
+
+    screen.open('/')
+    screen.wait_for(lambda: scene is not None)
+    assert screen.selenium.execute_script(f'return getElement({scene.id}).controls.constructor.name') == constructor

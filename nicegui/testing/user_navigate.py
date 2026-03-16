@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
-from nicegui import Client, background_tasks
-from nicegui.element import Element
+from nicegui import Client, background_tasks, ui
 from nicegui.functions.navigate import Navigate
 
 if TYPE_CHECKING:
@@ -16,8 +16,8 @@ class UserNavigate(Navigate):
         super().__init__()
         self.user = user
 
-    def to(self, target: Callable[..., Any] | str | Element, new_tab: bool = False) -> None:
-        if isinstance(target, Element):
+    def to(self, target: Callable[..., Any] | str | ui.element, new_tab: bool = False) -> None:
+        if isinstance(target, ui.element):
             # NOTE navigation to an element does not do anything in the user simulation (the whole content is always visible)
             return
         path = Client.page_routes[target] if callable(target) else target

@@ -6,7 +6,9 @@ const {
   CSS3DRenderer,
   DragControls,
   GLTFLoader,
+  MapControls,
   OrbitControls,
+  TrackballControls,
   STLLoader,
   TransformControls,
   THREE,
@@ -77,6 +79,7 @@ export default {
 
   mounted() {
     this.scene = new THREE.Scene();
+    this.clock = new THREE.Clock();
     this.objects = new Map();
     this.objects.set("scene", this.scene);
     this.draggable_objects = [];
@@ -98,7 +101,7 @@ export default {
         this.cameraParams.fov,
         this.width / this.height,
         this.cameraParams.near,
-        this.cameraParams.far
+        this.cameraParams.far,
       );
     } else {
       this.camera = new THREE.OrthographicCamera(
@@ -107,7 +110,7 @@ export default {
         this.cameraParams.size / 2,
         -this.cameraParams.size / 2,
         this.cameraParams.near,
-        this.cameraParams.far
+        this.cameraParams.far,
       );
     }
     this.look_at = new THREE.Vector3(0, 0, 0);
@@ -146,12 +149,16 @@ export default {
       this.$el.children[1].style.visibility = "hidden";
       this.$el.children[2].style.visibility = "hidden";
       this.$el.children[3].style.display = "block";
-      this.$el.addEventListener("click", () => {
-        const elementDefinition = mounted_app.elements[this.$el.id.slice(1)];
-        const originalTag = elementDefinition.tag;
-        elementDefinition.tag = "";
-        this.$nextTick(() => (elementDefinition.tag = originalTag));
-      }, { once: true });
+      this.$el.addEventListener(
+        "click",
+        () => {
+          const elementDefinition = mounted_app.elements[this.$el.id.slice(1)];
+          const originalTag = elementDefinition.tag;
+          elementDefinition.tag = "";
+          this.$nextTick(() => (elementDefinition.tag = originalTag));
+        },
+        { once: true },
+      );
     });
 
     this.text_renderer = new CSS2DRenderer({
@@ -198,7 +205,7 @@ export default {
       const gridDivisions = this.grid[1] || 100;
       const ground = new THREE.Mesh(
         new THREE.PlaneGeometry(gridSize, gridSize),
-        new THREE.MeshPhongMaterial({ color: this.backgroundColor })
+        new THREE.MeshPhongMaterial({ color: this.backgroundColor }),
       );
       ground.translateZ(-0.01);
       ground.object_id = "ground";
@@ -210,7 +217,8 @@ export default {
       grid.rotateX(Math.PI / 2);
       this.scene.add(grid);
     }
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controlClass = { trackball: TrackballControls, map: MapControls }[this.controlType] || OrbitControls;
+    this.controls = new this.controlClass(this.camera, this.renderer.domElement);
     this.drag_controls = new DragControls(this.draggable_objects, this.camera, this.renderer.domElement);
     this.drag_controls.transformGroup = true;
     const applyConstraint = (constraint, position) => {
@@ -238,6 +246,7 @@ export default {
     const render = () => {
       requestAnimationFrame(() => setTimeout(() => render(), 1000 / this.fps));
       this.camera_tween?.update();
+      this.controls.update(this.clock.getDelta());
       // Ensure full-canvas viewport and no scissor before main render
       const canvas = this.renderer.domElement;
       this.renderer.setViewport(0, 0, canvas.width, canvas.height);
@@ -380,7 +389,7 @@ export default {
           new THREE.Vector3(...args[0]),
           new THREE.Vector3(...args[1]),
           new THREE.Vector3(...args[2]),
-          new THREE.Vector3(...args[3])
+          new THREE.Vector3(...args[3]),
         );
         const points = curve.getPoints(args[4] - 1);
         const geometry = new THREE.BufferGeometry().setFromPoints(points);
@@ -422,7 +431,7 @@ export default {
           url,
           (gltf) => mesh.add(gltf.scene),
           undefined,
-          (error) => console.error(error)
+          (error) => console.error(error),
         );
       } else if (type == "stl") {
         // Handle STL separately due to async loading
@@ -480,7 +489,7 @@ export default {
           const curve = new THREE.QuadraticBezierCurve3(
             new THREE.Vector3(...args[0]),
             new THREE.Vector3(...args[1]),
-            new THREE.Vector3(...args[2])
+            new THREE.Vector3(...args[2]),
           );
           geometry = new THREE.TubeGeometry(curve, ...args.slice(3));
         }
@@ -500,7 +509,7 @@ export default {
         if (wireframe) {
           mesh = new THREE.LineSegments(
             new THREE.EdgesGeometry(geometry),
-            new THREE.LineBasicMaterial({ transparent: true })
+            new THREE.LineBasicMaterial({ transparent: true }),
           );
         } else {
           material = new THREE.MeshPhongMaterial({ transparent: true });
@@ -582,7 +591,7 @@ export default {
       const R4 = new THREE.Matrix4().makeBasis(
         new THREE.Vector3(...R[0]),
         new THREE.Vector3(...R[1]),
-        new THREE.Vector3(...R[2])
+        new THREE.Vector3(...R[2]),
       );
       this.objects.get(object_id).rotation.setFromRotationMatrix(R4.transpose());
     },
@@ -1042,7 +1051,7 @@ export default {
             look_at_y === null ? this.look_at.y : look_at_y,
             look_at_z === null ? this.look_at.z : look_at_z,
           ],
-          duration * 1000
+          duration * 1000,
         )
         .onUpdate((p) => {
           this.camera.position.set(p[0], p[1], p[2]);
@@ -1054,7 +1063,7 @@ export default {
         .onComplete(() => {
           if (camera_up_changed) {
             this.controls.dispose();
-            this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+            this.controls = new this.controlClass(this.camera, this.renderer.domElement);
             this.controls.target.copy(this.look_at);
             this.camera.lookAt(this.look_at);
           }
@@ -1137,5 +1146,6 @@ export default {
     backgroundColor: String,
     fps: Number,
     showStats: Boolean,
+    controlType: String,
   },
 };

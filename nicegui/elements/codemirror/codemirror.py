@@ -1,5 +1,5 @@
 from itertools import accumulate, chain, repeat
-from typing import Literal, Optional, get_args
+from typing import Literal, get_args
 
 from ...defaults import DEFAULT_PROP, resolve_defaults
 from ...elements.mixins.disableable_element import DisableableElement
@@ -261,14 +261,14 @@ class CodeMirror(
         self,
         value: str = "",
         *,
-        on_change: Optional[Handler[ValueChangeEventArguments]] = None,
-        on_cursor_line: Optional[Handler[GenericEventArguments]] = None,
-        language: Optional[SUPPORTED_LANGUAGES] = DEFAULT_PROP | None,
+        on_change: Handler[ValueChangeEventArguments] | None = None,
+        on_cursor_line: Handler[GenericEventArguments] | None = None,
+        language: SUPPORTED_LANGUAGES | None = DEFAULT_PROP | None,
         theme: SUPPORTED_THEMES = DEFAULT_PROP | 'basicLight',
         indent: str = DEFAULT_PROP | ' ' * 4,
         line_wrapping: bool = DEFAULT_PROP | False,
         highlight_whitespace: bool = DEFAULT_PROP | False,
-        custom_completions: Optional[list[dict]] = None,
+        custom_completions: list[dict] | None = None,
     ) -> None:
         """CodeMirror
 
@@ -337,10 +337,10 @@ class CodeMirror(
         return self._props["language"]
 
     @language.setter
-    def language(self, language: Optional[SUPPORTED_LANGUAGES] = None) -> None:
-        self._props["language"] = language
+    def language(self, language: SUPPORTED_LANGUAGES | None = None) -> None:
+        self._props['language'] = language
 
-    def set_language(self, language: Optional[SUPPORTED_LANGUAGES] = None) -> None:
+    def set_language(self, language: SUPPORTED_LANGUAGES | None = None) -> None:
         """Sets the language of the editor (case-insensitive)."""
         self._props["language"] = language
 
@@ -374,10 +374,10 @@ class CodeMirror(
         return self._props.get('custom-completions', [])
 
     @custom_completions.setter
-    def custom_completions(self, completions: Optional[list[dict]]) -> None:
+    def custom_completions(self, completions: list[dict] | None) -> None:
         self._props['custom-completions'] = completions or []
 
-    def set_completions(self, completions: Optional[list[dict]]) -> None:
+    def set_completions(self, completions: list[dict] | None) -> None:
         """Sets the custom completions for the editor.
 
         Each completion item is a dict with keys:
@@ -486,7 +486,9 @@ class CodeMirror(
         end_positions = accumulate(old_lengths)
         document_parts: list[str] = []
         codepoint_parts: list[bytes] = []
-        for end, old_len, new_len, insert in zip(end_positions, old_lengths, new_lengths, chain(inserted, repeat([]))):
+        for end, old_len, new_len, insert in zip(
+            end_positions, old_lengths, new_lengths, chain(inserted, repeat([])), strict=False,
+        ):
             if new_len == -1:
                 start = end - old_len
                 py_start = self._codepoints[:start].count(1)
