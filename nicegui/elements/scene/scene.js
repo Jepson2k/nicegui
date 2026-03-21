@@ -340,7 +340,7 @@ export default {
     })();
     const _hoverWorldPos = new THREE.Vector3();
     const _hoverBBox = new THREE.Box3();
-    const _transformWP = new THREE.Vector3();
+    this._transformWP = new THREE.Vector3();
 
     this.renderer.domElement.addEventListener("pointermove", (e) => {
       const rect = this.renderer.domElement.getBoundingClientRect();
@@ -810,7 +810,7 @@ export default {
         }
 
         // Compute world position for consumers that need absolute coordinates
-        object.getWorldPosition(_transformWP);
+        object.getWorldPosition(this._transformWP);
         
         // The dragging-changed log above shows when drag starts/stops
         this.$emit("transform", {
@@ -822,9 +822,9 @@ export default {
           y: object.position.y,
           z: object.position.z,
           // World coordinates (absolute)
-          wx: _transformWP.x,
-          wy: _transformWP.y,
-          wz: _transformWP.z,
+          wx: this._transformWP.x,
+          wy: this._transformWP.y,
+          wz: this._transformWP.z,
           // Local rotation
           rx: object.rotation.x,
           ry: object.rotation.y,
