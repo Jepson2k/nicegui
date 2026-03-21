@@ -13,6 +13,7 @@ const {
   TransformControls,
   THREE,
   TWEEN,
+  ViewHelper,
   Stats,
 } = SceneLib;
 
@@ -243,8 +244,12 @@ export default {
     this.drag_controls.addEventListener("drag", handleDrag);
     this.drag_controls.addEventListener("dragend", handleDrag);
 
+    let prevTime = performance.now();
     const render = () => {
       requestAnimationFrame(() => setTimeout(() => render(), 1000 / this.fps));
+      const now = performance.now();
+      const delta = (now - prevTime) / 1000;
+      prevTime = now;
       this.camera_tween?.update();
       this.controls.update(this.clock.getDelta());
       // Ensure full-canvas viewport and no scissor before main render
@@ -255,54 +260,13 @@ export default {
       this.text_renderer.render(this.scene, this.camera);
       this.text3d_renderer.render(this.scene, this.camera);
 
-      // Render camera orientation axes inset (bottom-left)
-      if (this.axesScene && this.axesCamera) {
-        const size = (this._axes && this._axes.size) ? this._axes.size : 96;
-        const margin = (this._axes && this._axes.margin) ? this._axes.margin : 10;
-
-        // Sync the inset camera orientation with the main camera using orbit direction
-        const target = (this.controls && this.controls.target) ? this.controls.target : (this.look_at || new THREE.Vector3(0, 0, 0));
-        const cameraDir = this.camera.position.clone().sub(target).normalize();
-        this.axesCamera.position.copy(cameraDir).multiplyScalar(2);
-        this.axesCamera.lookAt(0, 0, 0);
-        this.axesCamera.up.copy(this.camera.up);
-        this.axesCamera.updateProjectionMatrix();
-
-        // Draw into a scissored viewport with configurable anchor and margins (scale by device pixel ratio)
-        const pr = (this.renderer.getPixelRatio?.() ?? window.devicePixelRatio ?? 1);
-        const mx = Math.floor(((this._axes && this._axes.marginX) ?? margin) * pr);
-        const my = Math.floor(((this._axes && this._axes.marginY) ?? margin) * pr);
-        const vw = Math.floor(size * pr);
-        const vh = Math.floor(size * pr);
-        const anchor = (this._axes && this._axes.anchor) ? this._axes.anchor : "bottom-left";
-        const canvasEl = this.renderer.domElement;
-        let vx = mx;
-        let vy = my;
-        if (anchor === "bottom-right") {
-          vx = canvasEl.width - vw - mx;
-          vy = my;
-        } else if (anchor === "top-left") {
-          vx = mx;
-          vy = canvasEl.height - vh - my;
-        } else if (anchor === "top-right") {
-          vx = canvasEl.width - vw - mx;
-          vy = canvasEl.height - vh - my;
-        }
-        this.renderer.setScissorTest(true);
-        this.renderer.setViewport(vx, vy, vw, vh);
-        this.renderer.setScissor(vx, vy, vw, vh);
-
-        // Render inset without clearing color (transparent overlay)
-        const prevAutoClear = this.renderer.autoClear;
+      // Render ViewHelper orientation gizmo (disable autoClear so it doesn't wipe the scene)
+      if (this.viewHelper) {
+        const autoClear = this.renderer.autoClear;
         this.renderer.autoClear = false;
-        this.renderer.clearDepth();
-        this.renderer.render(this.axesScene, this.axesCamera);
-        this.renderer.autoClear = prevAutoClear;
-
-        // Restore scissor and full viewport for subsequent renders
-        this.renderer.setScissorTest(false);
-        const canvas = this.renderer.domElement;
-        this.renderer.setViewport(0, 0, canvas.width, canvas.height);
+        this.viewHelper.render(this.renderer);
+        this.renderer.autoClear = autoClear;
+        if (this.viewHelper.animating) this.viewHelper.update(delta);
       }
 
       if (this.stats) this.stats.update();
@@ -354,7 +318,76 @@ export default {
         offset_y: mouseEvent.offsetY,
       });
     };
-    this.clickEvents.forEach((event) => this.$el.addEventListener(event, click_handler));
+    this.clickEvents.forEach((event) => this.$el.addEventListener(event, (mouseEvent) => {
+      // Let ViewHelper handle axis label clicks first
+      if (this.viewHelper && this.viewHelper.handleClick(mouseEvent)) return;
+      click_handler(mouseEvent);
+    }));
+
+    // Hover detection for hoverable objects (JS-side only, no Python roundtrip)
+    // Shows a semi-transparent sphere scaled to the hovered object's bounding sphere
+    this.hoveredObject = null;
+    this.hoverGlow = (() => {
+      const geo = new THREE.SphereGeometry(1, 16, 16);
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 0.2, depthTest: false,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.renderOrder = 999;
+      mesh.visible = false;
+      this.scene.add(mesh);
+      return mesh;
+    })();
+    const _hoverWorldPos = new THREE.Vector3();
+    const _hoverBBox = new THREE.Box3();
+    const _transformWP = new THREE.Vector3();
+
+    this.renderer.domElement.addEventListener("pointermove", (e) => {
+      const rect = this.renderer.domElement.getBoundingClientRect();
+      const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera({ x, y }, this.camera);
+      const hits = raycaster
+        .intersectObjects(this.scene.children, true)
+        .filter((o) => o.object.object_id);
+
+      // Walk through all hits to find first hoverable ancestor
+      let newHover = null;
+      for (const hit of hits) {
+        let obj = hit.object;
+        while (obj) {
+          if (obj.object_id && this.objects.has(obj.object_id)) {
+            const mapped = this.objects.get(obj.object_id);
+            if (mapped._hoverable) { newHover = mapped; break; }
+          }
+          obj = obj.parent;
+        }
+        if (newHover) break;
+      }
+
+      if (newHover !== this.hoveredObject) {
+        if (this.hoveredObject) {
+          this.hoverGlow.visible = false;
+          this.renderer.domElement.style.cursor = "";
+        }
+        if (newHover) {
+          // Size glow sphere to 2x the object's bounding sphere radius
+          _hoverBBox.setFromObject(newHover);
+          const bSize = _hoverBBox.getSize(new THREE.Vector3());
+          const radius = Math.max(bSize.x, bSize.y, bSize.z) * 0.5;
+          const glowScale = Math.max(radius * 2, 0.01);
+          this.hoverGlow.scale.setScalar(glowScale);
+          newHover.getWorldPosition(_hoverWorldPos);
+          this.hoverGlow.position.copy(_hoverWorldPos);
+          this.hoverGlow.visible = true;
+          this.renderer.domElement.style.cursor = "pointer";
+        }
+        this.hoveredObject = newHover;
+      } else if (this.hoveredObject) {
+        this.hoveredObject.getWorldPosition(_hoverWorldPos);
+        this.hoverGlow.position.copy(_hoverWorldPos);
+      }
+    });
 
     this.texture_loader = new THREE.TextureLoader();
     this.stl_loader = new STLLoader();
@@ -395,6 +428,37 @@ export default {
         const geometry = new THREE.BufferGeometry().setFromPoints(points);
         const material = new THREE.LineBasicMaterial({ transparent: true });
         mesh = new THREE.Line(geometry, material);
+      } else if (type === "polyline") {
+        const pts = args[0].map(p => new THREE.Vector3(p[0], p[1], p[2]));
+        const geometry = new THREE.BufferGeometry().setFromPoints(pts);
+        const colors = args[1];
+        const dashed = args[2];
+        if (colors) {
+          const flat = new Float32Array(colors.length * 3);
+          for (let i = 0; i < colors.length; i++) {
+            flat[i * 3] = colors[i][0];
+            flat[i * 3 + 1] = colors[i][1];
+            flat[i * 3 + 2] = colors[i][2];
+          }
+          geometry.setAttribute("color", new THREE.BufferAttribute(flat, 3));
+        }
+        const useVertexColors = !!colors;
+        if (dashed) {
+          const mat = new THREE.LineDashedMaterial({
+            transparent: true,
+            dashSize: args[3],
+            gapSize: args[4],
+            vertexColors: useVertexColors,
+          });
+          mesh = new THREE.Line(geometry, mat);
+          mesh.computeLineDistances();
+        } else {
+          const mat = new THREE.LineBasicMaterial({
+            transparent: true,
+            vertexColors: useVertexColors,
+          });
+          mesh = new THREE.Line(geometry, mat);
+        }
       } else if (type == "text") {
         const div = document.createElement("div");
         div.textContent = args[0];
@@ -458,8 +522,8 @@ export default {
             // Apply any material properties that were set before load completed
             if (mesh._stlPendingMaterial) {
               const { color, opacity, side } = mesh._stlPendingMaterial;
-              if (color !== null && color !== undefined) {
-                const vertexColors = color === "vertex";
+              if (color !== undefined) {
+                const vertexColors = color === null;
                 child.material.color.set(vertexColors ? "#ffffff" : color);
                 child.material.vertexColors = vertexColors;
               }
@@ -477,7 +541,19 @@ export default {
       } else if (type == "arrow_helper") {
         const dir = new THREE.Vector3(...args[0]).normalize();
         const origin = new THREE.Vector3(...args[1]);
-        mesh = new THREE.ArrowHelper(dir, origin, args[2], 0xffffff, args[3], args[4]);
+        mesh = new THREE.ArrowHelper(dir, origin, args[2], args[3], args[4], args[5]);
+        if (args[6] && args[6] !== 1 && mesh.line && mesh.line.material) {
+          mesh.line.material.linewidth = args[6];
+        }
+        // Replace default 5-segment cone with smoother geometry
+        const radialSegs = args[7] || 16;
+        if (mesh.cone && radialSegs !== 5) {
+          const p = mesh.cone.geometry.parameters;
+          mesh.cone.geometry.dispose();
+          const newCone = new THREE.ConeGeometry(p.radius, p.height, radialSegs, 1);
+          newCone.translate(0, -0.5, 0);
+          mesh.cone.geometry = newCone;
+        }
       } else {
         let geometry;
         const wireframe = args.pop();
@@ -492,6 +568,10 @@ export default {
             new THREE.Vector3(...args[2]),
           );
           geometry = new THREE.TubeGeometry(curve, ...args.slice(3));
+        }
+        if (type === "lathe") {
+          const pts = args[0].map((p) => new THREE.Vector2(p[0], p[1]));
+          geometry = new THREE.LatheGeometry(pts, ...args.slice(1));
         }
         if (type == "extrusion") {
           const shape = new THREE.Shape();
@@ -615,11 +695,21 @@ export default {
         if (index != -1) this.draggable_objects.splice(index, 1);
       }
     },
+    hoverable(object_id, value) {
+      if (!this.objects.has(object_id)) return;
+      this.objects.get(object_id)._hoverable = !!value;
+    },
     delete(object_id) {
       if (!this.objects.has(object_id)) return;
       // Clean up any transform controls attached to this object
       this.disable_transform_controls(object_id);
       const object = this.objects.get(object_id);
+      // Clear hover state if this object was hovered
+      if (this.hoveredObject === object) {
+        this.hoverGlow.visible = false;
+        this.renderer.domElement.style.cursor = "";
+        this.hoveredObject = null;
+      }
       object.removeFromParent();
       this.objects.delete(object_id);
       const index = this.draggable_objects.indexOf(object);
@@ -688,7 +778,6 @@ export default {
       
       // Disable orbit controls while transforming - using reference counting to handle multiple TransformControls
       tc.addEventListener("dragging-changed", (event) => {
-        const prevCount = this.dragging_count;
         isDragging = event.value;
         
         if (event.value) {
@@ -721,8 +810,7 @@ export default {
         }
 
         // Compute world position for consumers that need absolute coordinates
-        const wp = new THREE.Vector3();
-        object.getWorldPosition(wp);
+        object.getWorldPosition(_transformWP);
         
         // The dragging-changed log above shows when drag starts/stops
         this.$emit("transform", {
@@ -734,9 +822,9 @@ export default {
           y: object.position.y,
           z: object.position.z,
           // World coordinates (absolute)
-          wx: wp.x,
-          wy: wp.y,
-          wz: wp.z,
+          wx: _transformWP.x,
+          wy: _transformWP.y,
+          wz: _transformWP.z,
           // Local rotation
           rx: object.rotation.x,
           ry: object.rotation.y,
@@ -899,88 +987,30 @@ export default {
       this._axes = Object.assign({}, prev, opts || {});
       const enabled = !!this._axes.enabled;
       if (enabled) {
-        if (!this.axesScene || !this.axesCamera) {
-          this.axesScene = new THREE.Scene();
-          this.axesCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
-          this.axesHelper = new THREE.AxesHelper(0.6);
-          if (this.axesHelper.material) {
-            const mats = Array.isArray(this.axesHelper.material) ? this.axesHelper.material : [this.axesHelper.material];
-            mats.forEach((m) => {
-              m.transparent = true;
-              m.opacity = 0.95;
-              m.depthTest = false;
-            });
-          }
-          this.axesScene.add(this.axesHelper);
-          // If labels were requested before creation, create now
-          if (this._axesLabels && this._axesLabels.enabled && !this.axesLabels) {
-            this.set_axes_labels({ enabled: true });
+        if (!this.viewHelper) {
+          this.viewHelper = new ViewHelper(this.camera, this.renderer.domElement);
+          if (this.controls && this.controls.target) {
+            this.viewHelper.center = this.controls.target;
           }
         }
+        // Apply anchor/margin positioning via ViewHelper.location
+        const anchor = this._axes.anchor || "bottom-right";
+        const mx = this._axes.marginX ?? this._axes.margin ?? 0;
+        const my = this._axes.marginY ?? this._axes.margin ?? 0;
+        this.viewHelper.location.left = anchor.includes("left") ? mx : null;
+        this.viewHelper.location.right = anchor.includes("right") ? mx : 0;
+        this.viewHelper.location.top = anchor.includes("top") ? my : null;
+        this.viewHelper.location.bottom = anchor.includes("bottom") ? my : 0;
       } else {
-        // disable inset and free objects
-        this.axesScene = null;
-        this.axesCamera = null;
-        this.axesHelper = null;
-        this.axesLabels = null;
+        if (this.viewHelper && this.viewHelper.dispose) this.viewHelper.dispose();
+        this.viewHelper = null;
       }
     },
 
-    // Configure axis labels (X,Y,Z) for orientation inset (opt-in, lazy)
-    // opts: { enabled?: boolean, font?: string, colorX?: string, colorY?: string, colorZ?: string, size?: number }
+    // Configure axis labels for ViewHelper
     set_axes_labels(opts) {
-      this._axesLabels = Object.assign({}, this._axesLabels || {}, opts || {});
-      const enabled = !!this._axesLabels.enabled;
-      if (!this.axesScene || !this.axesCamera) return;
-      if (enabled && !this.axesLabels) {
-        const createAxisLabel = (text, color, position) => {
-          const canvas = document.createElement("canvas");
-          const ctx = canvas.getContext("2d");
-          if (!ctx) return null;
-          const padding = 8;
-          const font = this._axesLabels.font || "bold 32px sans-serif";
-          ctx.font = font;
-          const metrics = ctx.measureText(text);
-          const w = Math.ceil(metrics.width) + padding * 2;
-          const h = 48 + padding * 2;
-          canvas.width = w;
-          canvas.height = h;
-          const ctx2 = canvas.getContext("2d");
-          if (!ctx2) return null;
-          ctx2.font = font;
-          ctx2.textAlign = "center";
-          ctx2.textBaseline = "middle";
-          ctx2.lineWidth = 6;
-          ctx2.strokeStyle = "rgba(0,0,0,0.5)";
-          ctx2.strokeText(text, w / 2, h / 2);
-          ctx2.fillStyle = color;
-          ctx2.fillText(text, w / 2, h / 2);
-          const tex = new THREE.CanvasTexture(canvas);
-          tex.minFilter = THREE.LinearFilter;
-          const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
-          const sprite = new THREE.Sprite(mat);
-          sprite.position.copy(position);
-          const s = (this._axesLabels.size || 0.35);
-          sprite.scale.set(s, s, 1);
-          return sprite;
-        };
-        this.axesLabels = {};
-        const cx = this._axesLabels.colorX || "#d94c3f";
-        const cy = this._axesLabels.colorY || "#2faf7a";
-        const cz = this._axesLabels.colorZ || "#4a63e0";
-        const lblX = createAxisLabel("X", cx, new THREE.Vector3(0.8, 0, 0));
-        const lblY = createAxisLabel("Y", cy, new THREE.Vector3(0, 0.8, 0));
-        const lblZ = createAxisLabel("Z", cz, new THREE.Vector3(0, 0, 0.8));
-        [lblX, lblY, lblZ].forEach((s) => { if (s) this.axesScene.add(s); });
-        this.axesLabels.X = lblX;
-        this.axesLabels.Y = lblY;
-        this.axesLabels.Z = lblZ;
-      } else if (!enabled && this.axesLabels) {
-        for (const key of Object.keys(this.axesLabels)) {
-          const spr = this.axesLabels[key];
-          if (spr && spr.parent) this.axesScene.remove(spr);
-        }
-        this.axesLabels = null;
+      if (this.viewHelper && opts && opts.enabled) {
+        this.viewHelper.setLabels("X", "Y", "Z");
       }
     },
 
@@ -1121,6 +1151,7 @@ export default {
         sz,
         visible,
         draggable,
+        hoverable,
       ] of data) {
         this.create(type, id, parent_id, ...args);
         this.name(id, name);
@@ -1130,6 +1161,7 @@ export default {
         this.scale(id, sx, sy, sz);
         this.visible(id, visible);
         this.draggable(id, draggable);
+        this.hoverable(id, hoverable);
       }
     },
   },

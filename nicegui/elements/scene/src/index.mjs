@@ -8,6 +8,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TrackballControls } from "three/addons/controls/TrackballControls.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
+import { ViewHelper } from "three/addons/helpers/ViewHelper.js";
 import * as TWEEN from "@tweenjs/tween.js";
 import Stats from "three/examples/jsm/libs/stats.module.js";
 
@@ -25,5 +26,6 @@ export default {
   TransformControls,
   THREE,
   TWEEN,
+  ViewHelper,
   Stats,
 };
