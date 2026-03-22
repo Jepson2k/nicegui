@@ -621,7 +621,7 @@ export default {
           if (childMaterial) {
             const vertexColors = color === null;
             childMaterial.color.set(vertexColors ? "#ffffff" : color);
-            childMaterial.needsUpdate = childMaterial.vertexColors != vertexColors;
+            childMaterial.needsUpdate = true;
             childMaterial.vertexColors = vertexColors;
             childMaterial.opacity = opacity;
             childMaterial.side = sideValue;
@@ -651,7 +651,7 @@ export default {
       if (!material) return;
       const vertexColors = color === null;
       material.color.set(vertexColors ? "#ffffff" : color);
-      material.needsUpdate = material.vertexColors != vertexColors;
+      material.needsUpdate = true;
       material.vertexColors = vertexColors;
       material.opacity = opacity;
       if (side == "front") material.side = THREE.FrontSide;
