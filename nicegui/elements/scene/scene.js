@@ -274,6 +274,12 @@ export default {
     render();
 
     const raycaster = new THREE.Raycaster();
+    // Default Line/Points threshold (1.0) is too coarse for scenes with
+    // many thin objects — raycast can return thousands of hits, exceeding
+    // the WebSocket payload limit. Use the configurable prop if provided.
+    const hitThreshold = this.raycasterThreshold ?? 1.0;
+    raycaster.params.Line.threshold = hitThreshold;
+    raycaster.params.Points.threshold = hitThreshold;
 
     // Ground plane for ray-plane intersection (Z=0)
     const groundPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
@@ -1179,5 +1185,6 @@ export default {
     fps: Number,
     showStats: Boolean,
     controlType: String,
+    raycasterThreshold: Number,
   },
 };
