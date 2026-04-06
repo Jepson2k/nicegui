@@ -1,5 +1,93 @@
 import * as CM from "nicegui-codemirror";
 
+// ── Line anchors: track document positions through edits ──
+// Named sets of anchors, each with a string ID. CM6 remaps positions automatically.
+
+class AnchorValue extends CM.RangeValue {
+  constructor(id, setName) {
+    super();
+    this.id = id;
+    this.setName = setName;
+  }
+  eq(other) { return this.id === other.id && this.setName === other.setName; }
+}
+
+const setAnchorsEffect = CM.StateEffect.define();   // value: {setName, ranges}
+const clearAnchorsEffect = CM.StateEffect.define();  // value: setName | null
+
+const anchorField = CM.StateField.define({
+  create() { return CM.RangeSet.empty; },
+  update(set, tr) {
+    set = set.map(tr.changes);
+    for (const effect of tr.effects) {
+      if (effect.is(clearAnchorsEffect)) {
+        if (effect.value === null) return CM.RangeSet.empty;
+        const keep = [];
+        const cursor = set.iter();
+        while (cursor.value) {
+          if (cursor.value.setName !== effect.value)
+            keep.push(cursor.value.range(cursor.from, cursor.to));
+          cursor.next();
+        }
+        return CM.RangeSet.of(keep, true);
+      }
+      if (effect.is(setAnchorsEffect)) {
+        const { setName, ranges } = effect.value;
+        const keep = [];
+        const cursor = set.iter();
+        while (cursor.value) {
+          if (cursor.value.setName !== setName)
+            keep.push(cursor.value.range(cursor.from, cursor.to));
+          cursor.next();
+        }
+        return CM.RangeSet.of([...keep, ...ranges], true);
+      }
+    }
+    return set;
+  },
+});
+
+// ── Line tooltips: per-line hover metadata ──
+// Named sets of {lineNumber → metadata dict}. Merged across sets on hover.
+
+const setTooltipsEffect = CM.StateEffect.define();   // value: {setName, data: Map}
+const clearTooltipsEffect = CM.StateEffect.define();  // value: setName | null
+
+const tooltipField = CM.StateField.define({
+  create() { return new Map(); },  // setName → Map<lineNum, metadata>
+  update(map, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(clearTooltipsEffect)) {
+        if (effect.value === null) return new Map();
+        const m = new Map(map);
+        m.delete(effect.value);
+        return m;
+      }
+      if (effect.is(setTooltipsEffect)) {
+        const m = new Map(map);
+        m.set(effect.value.setName, effect.value.data);
+        return m;
+      }
+    }
+    if (tr.docChanged && map.size > 0) {
+      const newMap = new Map();
+      for (const [setName, lineMap] of map) {
+        const remapped = new Map();
+        for (const [line, meta] of lineMap) {
+          const doc = tr.startState.doc;
+          if (line >= 1 && line <= doc.lines) {
+            const newPos = tr.changes.mapPos(doc.line(line).from);
+            remapped.set(tr.state.doc.lineAt(newPos).number, meta);
+          }
+        }
+        newMap.set(setName, remapped);
+      }
+      return newMap;
+    }
+    return map;
+  },
+});
+
 export default {
   template: `
     <div></div>
@@ -47,12 +135,6 @@ export default {
         this.resolveEditor = resolve;
       }),
     };
-  },
-  beforeUnmount() {
-    if (this.editor) {
-      const element = mounted_app.elements[this.$props.id.slice(1)];
-      if (element) element.props.value = this.editor.state.doc.toString();
-    }
   },
   methods: {
     // Find the language's extension by its name. Case insensitive.
@@ -227,6 +309,81 @@ export default {
         effects: this.completionsConfig.reconfigure([completionExtension]),
       });
     },
+    revealLine(lineNumber) {
+      if (!this.editor) return;
+      const doc = this.editor.state.doc;
+      const lineNum = Math.max(1, Math.min(lineNumber, doc.lines));
+      const line = doc.line(lineNum);
+      this.editor.dispatch({
+        effects: CM.EditorView.scrollIntoView(line.from, { y: "center" }),
+      });
+    },
+    // ── Line anchors ──
+    setLineAnchors(anchors, setName) {
+      if (!this.editor) return;
+      const doc = this.editor.state.doc;
+      const ranges = [];
+      for (const a of anchors) {
+        const lineNum = Math.max(1, Math.min(a.line, doc.lines));
+        const pos = doc.line(lineNum).from;
+        ranges.push(new AnchorValue(a.id, setName).range(pos, pos));
+      }
+      this.editor.dispatch({ effects: setAnchorsEffect.of({ setName, ranges }) });
+    },
+    clearLineAnchors(setName) {
+      if (!this.editor) return;
+      this.editor.dispatch({ effects: clearAnchorsEffect.of(setName ?? null) });
+    },
+    getLineAnchors() {
+      if (!this.editor) return {};
+      const field = this.editor.state.field(anchorField);
+      const doc = this.editor.state.doc;
+      const sets = {};
+      const cursor = field.iter();
+      while (cursor.value) {
+        const sn = cursor.value.setName;
+        if (!sets[sn]) sets[sn] = {};
+        sets[sn][cursor.value.id] = doc.lineAt(cursor.from).number;
+        cursor.next();
+      }
+      return sets;
+    },
+    // ── Diagnostics (linting) ──
+    setDiagnosticsFromPython(diagnostics) {
+      if (!this.editor) return;
+      const doc = this.editor.state.doc;
+      const cmDiagnostics = diagnostics.map(d => {
+        let from = d.from;
+        let to = d.to;
+        if (from === undefined && d.line !== undefined) {
+          const lineNum = Math.max(1, Math.min(d.line, doc.lines));
+          const line = doc.line(lineNum);
+          from = line.from;
+          to = line.to;
+        }
+        return {
+          from: Math.max(0, Math.min(from, doc.length)),
+          to: Math.max(0, Math.min(to, doc.length)),
+          severity: d.severity || "error",
+          message: d.message || "",
+          source: d.source || undefined,
+        };
+      });
+      this.editor.dispatch(CM.setDiagnostics(this.editor.state, cmDiagnostics));
+    },
+    // ── Line tooltips ──
+    setLineTooltips(tooltips, setName) {
+      if (!this.editor) return;
+      const lineMap = new Map();
+      for (const [line, data] of Object.entries(tooltips)) {
+        lineMap.set(parseInt(line), data);
+      }
+      this.editor.dispatch({ effects: setTooltipsEffect.of({ setName, data: lineMap }) });
+    },
+    clearLineTooltips(setName) {
+      if (!this.editor) return;
+      this.editor.dispatch({ effects: clearTooltipsEffect.of(setName ?? null) });
+    },
     setDecorations(decorationSets) {
       // Prop-driven path — store and merge with JS-local state
       this._propDecorations = decorationSets;
@@ -305,7 +462,6 @@ export default {
       );
 
       // Cursor line tracker — emits 1-indexed line number on cursor movement (debounced)
-      let _cursorTimer = null;
       const cursorTracker = CM.ViewPlugin.fromClass(
         class {
           constructor() { this._lastLine = 0; }
@@ -314,16 +470,87 @@ export default {
             const line = update.state.doc.lineAt(update.state.selection.main.head).number;
             if (line === this._lastLine) return;
             this._lastLine = line;
-            if (_cursorTimer) clearTimeout(_cursorTimer);
-            _cursorTimer = setTimeout(() => self.$emit("cursor-line", { line }), 30);
+            if (self._cursorTimer) clearTimeout(self._cursorTimer);
+            self._cursorTimer = setTimeout(() => self.$emit("cursor-line", { line }), 30);
           }
         }
       );
+
+      // Anchor position tracker — emits updated positions when doc changes remap anchors
+      const anchorTracker = CM.ViewPlugin.fromClass(
+        class {
+          update(update) {
+            if (!update.docChanged) return;
+            const field = update.state.field(anchorField);
+            if (field.size === 0) return;
+            if (self._anchorTimer) clearTimeout(self._anchorTimer);
+            self._anchorTimer = setTimeout(() => {
+              const doc = update.state.doc;
+              const sets = {};
+              const cursor = field.iter();
+              while (cursor.value) {
+                const sn = cursor.value.setName;
+                if (!sets[sn]) sets[sn] = {};
+                sets[sn][cursor.value.id] = doc.lineAt(cursor.from).number;
+                cursor.next();
+              }
+              for (const [setName, anchors] of Object.entries(sets)) {
+                self.$emit("anchor-positions", { set_name: setName, anchors });
+              }
+            }, 50);
+          }
+        }
+      );
+
+      // Hover tooltip: shows line metadata as key-value pairs
+      const lineTooltip = CM.hoverTooltip((view, pos) => {
+        const doc = view.state.doc;
+        const line = doc.lineAt(pos);
+        const allSets = view.state.field(tooltipField);
+        if (allSets.size === 0) return null;
+
+        const merged = {};
+        for (const [, lineMap] of allSets) {
+          const meta = lineMap.get(line.number);
+          if (meta) Object.assign(merged, meta);
+        }
+        if (Object.keys(merged).length === 0) return null;
+
+        return {
+          pos: line.from,
+          above: true,
+          create() {
+            const dom = document.createElement("div");
+            dom.className = "cm-line-tooltip";
+            if (merged._html) {
+              dom.innerHTML = merged._html;
+            } else {
+              const parts = [];
+              for (const [key, val] of Object.entries(merged)) {
+                if (key.startsWith("_")) continue;
+                if (Array.isArray(val)) {
+                  for (const item of val) parts.push(`${key}: ${item}`);
+                } else {
+                  parts.push(`${key}: ${val}`);
+                }
+              }
+              dom.textContent = parts.join("\n");
+              dom.style.whiteSpace = "pre";
+            }
+            return { dom };
+          },
+        };
+      });
 
       const extensions = [
         CM.basicSetup,
         changeSender,
         cursorTracker,
+        anchorTracker,
+        anchorField,
+        tooltipField,
+        CM.lintGutter(),
+        lineTooltip,
         // Enables the Tab key to indent the current lines https://codemirror.net/examples/tab/
         CM.keymap.of([CM.indentWithTab]),
         // Sets indentation https://codemirror.net/docs/ref/#language.indentUnit
@@ -357,6 +584,12 @@ export default {
           },
           ".cm-highlighted": {
             backgroundColor: "rgba(255, 255, 0, 0.3)",
+          },
+          // Line tooltip styling
+          ".cm-line-tooltip": {
+            padding: "4px 8px",
+            fontSize: "0.85em",
+            lineHeight: "1.4",
           },
         }),
       ];
@@ -400,7 +633,14 @@ export default {
     }
   },
   beforeUnmount() {
+    // Sync final value to Python before destruction
+    if (this.editor) {
+      const element = mounted_app.elements[this.$props.id.slice(1)];
+      if (element) element.props.value = this.editor.state.doc.toString();
+    }
     clearTimeout(this._highlightTimer);
+    clearTimeout(this._cursorTimer);
+    clearTimeout(this._anchorTimer);
     if (this.editor) {
       this.editor.destroy();
       this.editor = null;

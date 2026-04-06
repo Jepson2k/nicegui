@@ -301,6 +301,9 @@ class CodeMirror(
         if on_cursor_line is not None:
             self.on("cursor-line", on_cursor_line)
 
+        self._anchor_positions: dict[str, dict[str, int]] = {}
+        self.on("anchor-positions", self._update_anchor_mirror)
+
         self._props['language'] = language
         self._props['theme'] = theme
         self._props['indent'] = indent
@@ -460,6 +463,96 @@ class CodeMirror(
         line_indices = [n - 1 for n in line_numbers if n > 0]
         if line_indices:
             self.run_method("highlightLines", line_indices, css_class, duration_ms)
+
+    def set_line_anchors(
+        self,
+        anchors: list[dict],
+        set_name: str = "default",
+    ) -> None:
+        """Set tracked line anchors for a named set.
+
+        Anchors are document positions identified by string IDs that
+        automatically remap through edits. When positions change, the
+        ``anchor-positions`` event fires with updated line numbers.
+
+        This is a batch-replace operation: all anchors in the named set
+        are replaced. Other named sets are unaffected.
+
+        Args:
+            anchors: List of dicts with 'id' (str) and 'line' (1-indexed int)
+            set_name: Named set for independent management (e.g., "breakpoints", "targets")
+        """
+        self.run_method("setLineAnchors", anchors, set_name)
+
+    def clear_line_anchors(self, set_name: str | None = None) -> None:
+        """Clear tracked line anchors.
+
+        Args:
+            set_name: Clear only this named set, or all sets if None
+        """
+        self.run_method("clearLineAnchors", set_name)
+
+    def set_diagnostics(self, diagnostics: list[dict]) -> None:
+        """Set linting diagnostics with inline messages and gutter icons.
+
+        Uses CodeMirror's built-in lint system. Diagnostics appear as
+        underlines in the editor with gutter icons indicating severity.
+
+        Args:
+            diagnostics: List of dicts with:
+                - line: 1-indexed line number (converted to from/to positions)
+                - severity: "error" | "warning" | "info" | "hint"
+                - message: The diagnostic message text
+                - source: Optional source identifier
+        """
+        self.run_method("setDiagnosticsFromPython", diagnostics)
+
+    def set_line_tooltips(
+        self,
+        tooltips: dict[int, dict],
+        set_name: str = "default",
+    ) -> None:
+        """Set hover tooltip metadata for lines.
+
+        When the user hovers a line, its metadata is rendered as a tooltip
+        showing key-value pairs. Multiple named sets are merged for the
+        same line.
+
+        Keys starting with underscore are control keys:
+            - _html: Raw HTML string (overrides key-value rendering)
+
+        Args:
+            tooltips: Dict mapping 1-indexed line numbers to metadata dicts
+            set_name: Named set for independent management
+        """
+        str_tooltips = {str(k): v for k, v in tooltips.items()}
+        self.run_method("setLineTooltips", str_tooltips, set_name)
+
+    def clear_line_tooltips(self, set_name: str | None = None) -> None:
+        """Clear line tooltip metadata.
+
+        Args:
+            set_name: Clear only this named set, or all sets if None
+        """
+        self.run_method("clearLineTooltips", set_name)
+
+    @property
+    def line_anchor_positions(self) -> dict[str, dict[str, int]]:
+        """Current anchor positions mirrored from the browser.
+
+        Updated automatically when document edits remap anchor positions.
+
+        Returns:
+            Dict of set_name → {anchor_id: 1-indexed line_number}
+        """
+        return dict(self._anchor_positions)
+
+    def _update_anchor_mirror(self, e: GenericEventArguments) -> None:
+        """Handle anchor-positions events from the JS side."""
+        args = e.args if isinstance(e.args, dict) else {}
+        set_name = args.get("set_name", "default")
+        anchors = args.get("anchors", {})
+        self._anchor_positions[set_name] = anchors
 
     def _event_args_to_value(self, e: GenericEventArguments) -> str:
         """The event contains a change set which is applied to the current value."""
