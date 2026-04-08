@@ -47,44 +47,50 @@ const anchorField = CM.StateField.define({
   },
 });
 
-// ── Line tooltips: per-line hover metadata ──
-// Named sets of {lineNumber → metadata dict}. Merged across sets on hover.
+// ── Line tooltips: per-line hover metadata, position-mapped via RangeSet ──
+// Each tooltip is a zero-width range pinned to the start of its line, so
+// CM6's RangeSet.map() handles all position remapping through edits.
 
-const setTooltipsEffect = CM.StateEffect.define();   // value: {setName, data: Map}
+class TooltipValue extends CM.RangeValue {
+  constructor(setName, meta) {
+    super();
+    this.setName = setName;
+    this.meta = meta;
+  }
+}
+
+const setTooltipsEffect = CM.StateEffect.define();   // value: {setName, ranges}
 const clearTooltipsEffect = CM.StateEffect.define();  // value: setName | null
 
 const tooltipField = CM.StateField.define({
-  create() { return new Map(); },  // setName → Map<lineNum, metadata>
-  update(map, tr) {
+  create() { return CM.RangeSet.empty; },
+  update(set, tr) {
+    set = set.map(tr.changes);
     for (const effect of tr.effects) {
       if (effect.is(clearTooltipsEffect)) {
-        if (effect.value === null) return new Map();
-        const m = new Map(map);
-        m.delete(effect.value);
-        return m;
+        if (effect.value === null) return CM.RangeSet.empty;
+        const keep = [];
+        const cursor = set.iter();
+        while (cursor.value) {
+          if (cursor.value.setName !== effect.value)
+            keep.push(cursor.value.range(cursor.from, cursor.to));
+          cursor.next();
+        }
+        return CM.RangeSet.of(keep, true);
       }
       if (effect.is(setTooltipsEffect)) {
-        const m = new Map(map);
-        m.set(effect.value.setName, effect.value.data);
-        return m;
-      }
-    }
-    if (tr.docChanged && map.size > 0) {
-      const newMap = new Map();
-      for (const [setName, lineMap] of map) {
-        const remapped = new Map();
-        for (const [line, meta] of lineMap) {
-          const doc = tr.startState.doc;
-          if (line >= 1 && line <= doc.lines) {
-            const newPos = tr.changes.mapPos(doc.line(line).from);
-            remapped.set(tr.state.doc.lineAt(newPos).number, meta);
-          }
+        const { setName, ranges } = effect.value;
+        const keep = [];
+        const cursor = set.iter();
+        while (cursor.value) {
+          if (cursor.value.setName !== setName)
+            keep.push(cursor.value.range(cursor.from, cursor.to));
+          cursor.next();
         }
-        newMap.set(setName, remapped);
+        return CM.RangeSet.of([...keep, ...ranges], true);
       }
-      return newMap;
     }
-    return map;
+    return set;
   },
 });
 
@@ -102,6 +108,7 @@ export default {
     highlightWhitespace: Boolean,
     customCompletions: Array,
     decorations: Object,
+    saveShortcutEnabled: Boolean,
     id: String,
   },
   watch: {
@@ -374,11 +381,16 @@ export default {
     // ── Line tooltips ──
     setLineTooltips(tooltips, setName) {
       if (!this.editor) return;
-      const lineMap = new Map();
+      const doc = this.editor.state.doc;
+      const ranges = [];
       for (const [line, data] of Object.entries(tooltips)) {
-        lineMap.set(parseInt(line), data);
+        const lineNum = parseInt(line);
+        if (lineNum >= 1 && lineNum <= doc.lines) {
+          const pos = doc.line(lineNum).from;
+          ranges.push(new TooltipValue(setName, data).range(pos, pos));
+        }
       }
-      this.editor.dispatch({ effects: setTooltipsEffect.of({ setName, data: lineMap }) });
+      this.editor.dispatch({ effects: setTooltipsEffect.of({ setName, ranges }) });
     },
     clearLineTooltips(setName) {
       if (!this.editor) return;
@@ -506,14 +518,13 @@ export default {
       const lineTooltip = CM.hoverTooltip((view, pos) => {
         const doc = view.state.doc;
         const line = doc.lineAt(pos);
-        const allSets = view.state.field(tooltipField);
-        if (allSets.size === 0) return null;
+        const set = view.state.field(tooltipField);
+        if (set.size === 0) return null;
 
         const merged = {};
-        for (const [, lineMap] of allSets) {
-          const meta = lineMap.get(line.number);
-          if (meta) Object.assign(merged, meta);
-        }
+        set.between(line.from, line.to, (_from, _to, value) => {
+          Object.assign(merged, value.meta);
+        });
         if (Object.keys(merged).length === 0) return null;
 
         return {
@@ -542,6 +553,22 @@ export default {
         };
       });
 
+      // Build the editor's custom keymap. Tab is always bound to indent;
+      // Mod-s (Ctrl/Cmd+S) is only bound when the host opts in via the
+      // `save-shortcut-enabled` prop, in which case the binding emits a
+      // `save` event and suppresses the browser default.
+      const customKeymap = [CM.indentWithTab];
+      if (this.saveShortcutEnabled) {
+        customKeymap.push({
+          key: "Mod-s",
+          preventDefault: true,
+          run: () => {
+            self.$emit("save");
+            return true;
+          },
+        });
+      }
+
       const extensions = [
         CM.basicSetup,
         changeSender,
@@ -549,10 +576,18 @@ export default {
         anchorTracker,
         anchorField,
         tooltipField,
-        CM.lintGutter(),
+        // NOTE: do NOT use CM.lintGutter() here — it pulls in lintGutterTooltip,
+        // a StateField that registers itself via showTooltip.from(field) and
+        // returns null on most transactions. That null provider sits in the
+        // showTooltip facet and silently suppresses the autocomplete popup
+        // outside of paren contexts. CM.linter() installs lintState (so the
+        // setDiagnostics() API still works and inline error marks render),
+        // and its only tooltip is a hoverTooltip that fires on mouseover,
+        // not on every keystroke. The empty source disables auto-linting.
+        CM.linter(() => []),
         lineTooltip,
         // Enables the Tab key to indent the current lines https://codemirror.net/examples/tab/
-        CM.keymap.of([CM.indentWithTab]),
+        CM.keymap.of(customKeymap),
         // Sets indentation https://codemirror.net/docs/ref/#language.indentUnit
         CM.indentUnit.of(this.indent),
         // We will set these Compartments later and dynamically through props

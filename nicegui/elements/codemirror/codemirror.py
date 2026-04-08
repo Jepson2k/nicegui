@@ -263,6 +263,7 @@ class CodeMirror(
         *,
         on_change: Handler[ValueChangeEventArguments] | None = None,
         on_cursor_line: Handler[GenericEventArguments] | None = None,
+        on_save: Handler[GenericEventArguments] | None = None,
         language: SUPPORTED_LANGUAGES | None = DEFAULT_PROP | None,
         theme: SUPPORTED_THEMES = DEFAULT_PROP | 'basicLight',
         indent: str = DEFAULT_PROP | ' ' * 4,
@@ -285,6 +286,9 @@ class CodeMirror(
         :param value: initial value of the editor (default: "")
         :param on_change: callback to be executed when the value changes (default: `None`)
         :param on_cursor_line: callback when the cursor moves to a different line; receives ``e.args["line"]`` (1-indexed)
+        :param on_save: callback fired when the user presses Ctrl/Cmd+S inside the editor.
+            When set, the binding is installed and the browser's default save behavior is suppressed.
+            (default: ``None``)
         :param language: initial language of the editor (case-insensitive, default: `None`)
         :param theme: initial theme of the editor (default: "basicLight")
         :param indent: string to use for indentation (any string consisting entirely of the same whitespace character, default: "    ")
@@ -300,6 +304,8 @@ class CodeMirror(
             super().on_value_change(on_change)
         if on_cursor_line is not None:
             self.on("cursor-line", on_cursor_line)
+        if on_save is not None:
+            self.on("save", on_save)
 
         self._anchor_positions: dict[str, dict[str, int]] = {}
         self.on("anchor-positions", self._update_anchor_mirror)
@@ -311,6 +317,7 @@ class CodeMirror(
         self._props['highlight-whitespace'] = highlight_whitespace
         self._props['custom-completions'] = custom_completions or []
         self._props['decorations'] = {}
+        self._props['save-shortcut-enabled'] = on_save is not None
         self._update_method = 'setEditorValueFromProps'
 
         self._props.add_rename('highlightWhitespace', 'highlight-whitespace')  # DEPRECATED: remove in NiceGUI 4.0
