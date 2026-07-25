@@ -83,7 +83,13 @@ def nicegui_reset_globals():
             if not func.__module__.startswith('tests.'):
                 parts = func.__module__.split('.')
                 for i in range(len(parts)):
-                    sys.modules.pop('.'.join(parts[:i+1]), None)  # remove the module and all its parents
+                    name = '.'.join(parts[:i + 1])
+                    if name == '__main__':
+                        # multiprocessing reads sys.modules['__main__'] unguarded when preparing every
+                        # spawn/forkserver worker, so popping it would break process pools for the rest
+                        # of the interpreter's lifetime (pages defined in a runpy'd main file land here).
+                        continue
+                    sys.modules.pop(name, None)  # remove the module and all its parents
 
 
 def _find_all_subclasses(cls: type) -> list[type]:
