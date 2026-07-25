@@ -453,8 +453,9 @@ class Client:
     def delete(self) -> None:
         """Delete a client and all its elements.
 
-        If the global clients dictionary does not contain the client, its elements are still removed and a KeyError is raised.
-        Normally this should never happen, but has been observed (see #1826).
+        The deleted flag is set before the client is removed from the global clients dictionary,
+        so a repeated or re-entrant call (see #1826) can never leave a client absent from the
+        registry but not marked as deleted.
         """
         for t in self.delete_handlers:
             self.safe_invoke(t)
@@ -464,8 +465,8 @@ class Client:
         self._deleted_event.set()
         self.remove_all_elements()
         self.outbox.stop()
-        del Client.instances[self.id]
         self._deleted = True
+        Client.instances.pop(self.id, None)
         self._connected.set()  # for terminating connected() waits
         self._connected.clear()
 
