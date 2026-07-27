@@ -2,7 +2,7 @@ import asyncio
 import re
 
 from nicegui import Client, app, ui
-from nicegui.testing import Screen
+from nicegui.testing import Screen, User
 
 
 def test_adding_elements_during_onconnect_on_auto_index_page(screen: Screen):
@@ -161,3 +161,18 @@ def test_no_double_delete(screen: Screen):
     Client.prune_instances(client_age_threshold=0)  # should do nothing because client is still trying to reconnect
     screen.wait(4)  # meanwhile client.delete() will be called without raising KeyError
     assert len(events) == 1, 'delete event should be called only once'
+
+
+async def test_repeated_delete_keeps_client_marked_deleted(user: User):
+    clients: list[Client] = []
+
+    @ui.page('/')
+    def page():
+        clients.append(ui.context.client)
+
+    await user.open('/')
+    client = clients[0]
+    client.delete()
+    client.delete()  # a repeated or racing call must not raise KeyError (see #1826)
+    assert client.is_deleted
+    assert client.id not in Client.instances
