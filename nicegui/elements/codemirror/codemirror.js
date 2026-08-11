@@ -69,6 +69,11 @@ export default {
     geometryDebounceMs: Number,
     diagnostics: Array,
     diagnosticMessageHtml: Boolean,
+    completions: Array,
+    replaceLanguageCompletions: Boolean,
+    completeWordsInDocument: Boolean,
+    completionInfoHtml: Boolean,
+    tooltipClass: String,
     keymap: Array,
     lineTooltips: Object,
     lineTooltipHtml: Boolean,
@@ -92,6 +97,21 @@ export default {
     },
     diagnostics(newDiagnostics) {
       this.applyDiagnostics(newDiagnostics);
+    },
+    completions() {
+      this.rebuildCompletions();
+    },
+    replaceLanguageCompletions() {
+      this.rebuildCompletions();
+    },
+    completeWordsInDocument() {
+      this.rebuildCompletions();
+    },
+    completionInfoHtml() {
+      this.rebuildCompletions();
+    },
+    tooltipClass() {
+      this.rebuildCompletions();
     },
     keymap() {
       this.setKeymap();
@@ -319,6 +339,99 @@ export default {
       });
       return counts;
     },
+    buildCompletionSource(completions) {
+      const useHtml = this.completionInfoHtml;
+      const renderInfo = (info) => () => {
+        const div = document.createElement("div");
+        if (useHtml) {
+          // setHTML (DOMPurify-backed polyfill) sanitizes HTML.
+          div.setHTML(info);
+        } else {
+          div.textContent = info;
+        }
+        return div;
+      };
+      return (context) => {
+        const word = context.matchBefore(/[\w.]+/);
+        if (!word && !context.explicit) return null;
+        const from = word ? word.from : context.pos;
+        const options = completions.map((c) => {
+          if (c.snippet && c.apply) {
+            return CM.snippetCompletion(c.apply, {
+              label: c.label,
+              displayLabel: c.display_label,
+              detail: c.detail,
+              info: c.info ? renderInfo(c.info) : undefined,
+              type: c.type,
+              boost: typeof c.boost === "number" ? c.boost : undefined,
+              commitCharacters: c.commit_characters,
+              section: c.section,
+              className: c.class_name,
+            });
+          }
+          const opt = { label: c.label, apply: c.apply ?? c.label };
+          if (c.display_label) opt.displayLabel = c.display_label;
+          if (c.detail) opt.detail = c.detail;
+          if (c.info) opt.info = renderInfo(c.info);
+          if (c.type) opt.type = c.type;
+          if (typeof c.boost === "number") opt.boost = c.boost;
+          if (c.commit_characters) opt.commitCharacters = c.commit_characters;
+          if (c.section) opt.section = c.section;
+          if (c.class_name) opt.className = c.class_name;
+          return opt;
+        });
+        return { from, options, validFor: /^[\w.]*$/ };
+      };
+    },
+    rebuildCompletions() {
+      if (!this.editor || !this.completionsConfig) return;
+      const sources = [];
+      if (this.completions && this.completions.length > 0) {
+        sources.push(this.buildCompletionSource(this.completions));
+      }
+      if (this.completeWordsInDocument) {
+        sources.push(CM.completeAnyWord);
+      }
+      const exts = [];
+      const tooltipClass = this.tooltipClass || "";
+      const optionClass = (c) => c.className || "";
+      const tooltipClassFn = tooltipClass ? () => tooltipClass : undefined;
+      if (this.replaceLanguageCompletions) {
+        // Override mode: replaces language-pack completion sources entirely.
+        // Register a single autocompletion() carrying both sources and styling so
+        // the second autocompletion() call below is skipped (it would stack a
+        // duplicate state field).
+        exts.push(CM.autocompletion({
+          override: sources,
+          tooltipClass: tooltipClassFn,
+          optionClass,
+        }));
+      } else {
+        // Merge mode: register sources via languageData so they compose with the
+        // active language pack's autocompletion (which basicSetup already enables).
+        sources.forEach((src) => {
+          exts.push(CM.EditorState.languageData.of(() => [{ autocomplete: src }]));
+        });
+        // Layer styling via Prec.highest only when needed, so it wins over
+        // basicSetup's autocompletion config without re-registering the source.
+        const hasClassName = this.completions && this.completions.some((c) => c.class_name);
+        if (tooltipClass || hasClassName) {
+          exts.push(CM.Prec.highest(CM.autocompletion({
+            tooltipClass: tooltipClassFn,
+            optionClass,
+          })));
+        }
+      }
+      // basicSetup's autocompletion() already registers the snippet keymap, so
+      // Tab / Shift-Tab cycles snippet placeholders without extra wiring here.
+      this.editor.dispatch({
+        effects: this.completionsConfig.reconfigure(exts),
+      });
+    },
+    triggerCompletion() {
+      if (!this.editor) return;
+      CM.startCompletion(this.editor);
+    },
     buildUserKeymap() {
       return (this.keymap || []).map(({ key, mac, linux, win, preventDefault }) => ({
         key,
@@ -511,6 +624,7 @@ export default {
         this.languageConfig.of([]),
         this.editableConfig.of([]),
         this.lineWrappingConfig.of([]),
+        this.completionsConfig.of([]),
         CM.EditorView.theme({
           "&": { height: "100%" },
           ".cm-scroller": { overflow: "auto" },
@@ -534,6 +648,7 @@ export default {
     this.editableConfig = new CM.Compartment();
     this.editableStates = { true: CM.EditorView.editable.of(true), false: CM.EditorView.editable.of(false) };
     this.lineWrappingConfig = new CM.Compartment();
+    this.completionsConfig = new CM.Compartment();
     this.userKeymapConfig = new CM.Compartment();
 
     const extensions = this.setupExtensions();
@@ -554,6 +669,7 @@ export default {
       this.applyLineAnchors(this.lineAnchors);
     }
     this.applyDiagnostics(this.diagnostics);
+    this.rebuildCompletions();
     this.setLineTooltips(this.lineTooltips);
     this.validateUserKeymap();
   },
