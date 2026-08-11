@@ -530,6 +530,8 @@ class CodeMirror(KeyBindingElement, LineAnchorElement, ValueElement[str], Disabl
         *Added in version X.Y.0*
         """
         return await self.run_method('getDiagnosticCount')
+
+    @property
     def completions(self) -> list[CompletionItem]:
         """The current autocomplete entries shown in the dropdown.
 
@@ -552,6 +554,8 @@ class CodeMirror(KeyBindingElement, LineAnchorElement, ValueElement[str], Disabl
         *Added in version X.Y.Z*
         """
         self.run_method('triggerCompletion')
+
+    @property
     def decorations(self) -> list[DecorationSpec]:
         """Decoration specs applied to the editor; mutating this list syncs to the client.
 
