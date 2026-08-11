@@ -59,6 +59,8 @@ def signals_and_reveal_demo() -> None:
         on_viewport_change=lambda e: viewport_status.set_text(f'Viewport: lines {e.from_line}–{e.to_line}'),
     ).classes('h-32')
     ui.button('Reveal line 40', on_click=lambda: editor.reveal_line(40))
+
+
 @doc.demo('Linting Diagnostics', '''
     The ``diagnostics`` property is a mutable list of ``Diagnostic`` dicts rendered as inline
     error/warning marks with hover tooltips. Each entry targets a 1-indexed line and carries a
@@ -86,6 +88,8 @@ def diagnostics_demo() -> None:
     ui.button('Lint', on_click=lint)
     ui.button('Clear', on_click=lambda: setattr(editor, 'diagnostics', []))
     ui.button('Toggle Panel', on_click=editor.toggle_lint_panel)
+
+
 @doc.demo('Autocomplete', '''
     Pass ``completions`` to surface your own entries in the autocomplete dropdown.
     Each item is a dict; only ``label`` is required.
@@ -125,6 +129,8 @@ def custom_completions_demo() -> None:
                '.cm-popup-wide { min-width: 320px; }')
 
     ui.button('Suggest', on_click=editor.trigger_completion)
+
+
 @doc.demo('Decorations', '''
     The `decorations` property is a mutable list of styled overlays on top of the editor's text,
     without modifying the document. There are four kinds:

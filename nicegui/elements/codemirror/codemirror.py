@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import accumulate, chain, repeat
-from typing import Any, Generic, get_args
-from typing import Literal, TypedDict, get_args
+from typing import Any, Generic, Literal, TypedDict, get_args
 
 from typing_extensions import NotRequired, Self
 

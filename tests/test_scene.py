@@ -717,6 +717,7 @@ def test_transform_controls_enable_disable(screen: Screen):
         f'return getElement({scene.id}).has_transform_controls("{box.id}")'
     ))
 
+
 def test_transform_controls_mode_change(screen: Screen):
     scene = None
     box = None
@@ -746,6 +747,7 @@ def test_transform_controls_mode_change(screen: Screen):
     screen.wait_for(lambda: screen.selenium.execute_script(
         f'return getElement({scene.id}).transform_controls.get("{box.id}")?.mode === "scale"'
     ))
+
 
 def test_set_orbit_enabled_survives_transform_drag(screen: Screen):
     """Locks in the regression for the orbit drag-counter race: a TransformControls drag-end must
@@ -786,6 +788,7 @@ def test_set_orbit_enabled_survives_transform_drag(screen: Screen):
         f'return getElement({scene.id}).controls.enabled'
     ) is False
 
+
 def test_interactive_state_survives_context_loss(screen: Screen):
     """_resend() replays handler registrations and hover effects when the scene remounts."""
     scene = None
@@ -814,6 +817,7 @@ def test_interactive_state_survives_context_loss(screen: Screen):
         'if (!el || !el.objectHandlers) return false;'
         f'return el.objectHandlers.has("{box.id}") && el.objectEffects.has("{box.id}")'
     ))
+
 
 def test_interactive_list_maintained_on_handler_register(screen: Screen):
     """Registering a handler from Python adds the underlying three.js object to the JS interactiveObjects list."""
@@ -852,6 +856,7 @@ def test_interactive_list_maintained_on_handler_register(screen: Screen):
         f'return getElement({scene.id}).interactiveObjects.length'
     ) == 1
 
+
 def test_hover_effect_named_variants(screen: Screen):
     """Each named effect installs the right kind of three.js artifact when hovered, and tears down cleanly."""
     scene = None
@@ -888,6 +893,7 @@ def test_hover_effect_named_variants(screen: Screen):
 
     screen.click('Off')
     screen.wait_for(lambda: get_effect_spec() is None)
+
 
 def test_pointer_event_dispatches_to_object_handler(screen: Screen):
     """Synthesizing a JS-side pointerevent should invoke the registered per-object Python handler."""
@@ -941,6 +947,7 @@ async def test_axes_inset_opts_cached_for_replay_on_init(user: User):
         'font': '24px Arial', 'color': '#ff0000', 'radius': 14,
     }
 
+
 def test_set_axes_inset_and_labels(screen: Screen):
     scene = None
 
@@ -984,6 +991,7 @@ def test_set_axes_inset_and_labels(screen: Screen):
         'return !!el.viewHelper && el._axesLabels && el._axesLabels.color === "#ff0000"'
     ))
 
+
 def test_axes_inset_preserves_main_scene_render(screen: Screen):
     """``viewHelper.render()`` clears the framebuffer when ``renderer.autoClear`` is true,
     which wipes the main scene one draw after it renders. The render loop must save/restore
@@ -1019,6 +1027,7 @@ def test_axes_inset_preserves_main_scene_render(screen: Screen):
     assert len(log) >= 2, f'expected multiple viewHelper.render calls, got {log}'
     assert all(v is False for v in log), \
         f'renderer.autoClear must be false during viewHelper.render; got {log}'
+
 
 def test_axes_inset_handle_click_snaps_camera(screen: Screen):
     scene = None
