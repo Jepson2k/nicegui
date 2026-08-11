@@ -16,6 +16,8 @@ from ...events import (
     SceneClickEventArguments,
     SceneClickHit,
     SceneDragEventArguments,
+    SceneIntersectionPlane,
+    ScenePoint,
     ScenePointerEventArguments,
     ScenePointerMissedEventArguments,
     SceneTransformEventArguments,
@@ -95,6 +97,8 @@ class Scene(Element, component='scene.js', esm={'nicegui-scene': 'dist'}, defaul
                  hover_color: str = DEFAULT_PROP | '#ffffff',
                  hover_opacity: float = DEFAULT_PROP | 0.2,
                  hover_scale: float = DEFAULT_PROP | 1.05,
+                 intersection_planes: list[SceneIntersectionPlane] | None = DEFAULT_PROP | None,
+                 raycaster_threshold: float = DEFAULT_PROP | 1.0,
                  ) -> None:
         """3D Scene
 
@@ -124,6 +128,16 @@ class Scene(Element, component='scene.js', esm={'nicegui-scene': 'dist'}, defaul
         :param hover_color: default color for the per-object ``hover_effect`` (default: ``'#ffffff'``, *added in version X.Y.Z*)
         :param hover_opacity: opacity of the back-face glow effect (default: ``0.2``, *added in version X.Y.Z*)
         :param hover_scale: linear scale factor applied to the glow effect relative to the source mesh (default: ``1.05``, *added in version X.Y.Z*)
+        :param intersection_planes: list of named planes to intersect each click ray with.
+            The intersection points are surfaced on click events as ``e.intersections[name]``,
+            so the host application can read where the ray hit each configured plane even when
+            the click lands on empty space. Default: no planes (``e.intersections`` is empty).
+            (*added in version TBD*)
+        :param raycaster_threshold: hit-test distance threshold (in scene units) for thin objects
+            like lines and point clouds. The default value (1.0) matches three.js, which is too
+            coarse for scenes with many thin objects (raycasts can return thousands of hits and
+            blow past the WebSocket payload limit); lower the threshold for dense scenes.
+            (*added in version TBD*)
         """
         super().__init__()
         self._props['width'] = width
@@ -136,6 +150,17 @@ class Scene(Element, component='scene.js', esm={'nicegui-scene': 'dist'}, defaul
         self._props['hover-color'] = hover_color
         self._props['hover-opacity'] = hover_opacity
         self._props['hover-scale'] = hover_scale
+        self._props['raycaster-threshold'] = raycaster_threshold
+        planes = list(intersection_planes or [])
+        seen: set[str] = set()
+        for plane in planes:
+            if plane.name in seen:
+                raise ValueError(f'Duplicate intersection_planes name: {plane.name!r}')
+            seen.add(plane.name)
+        self._props['intersection-planes'] = [
+            {'name': p.name, 'axis': p.axis, 'offset': p.offset}
+            for p in planes
+        ]
         self.camera = camera or self.perspective_camera()
         self._props['camera-type'] = self.camera.type
         self._props['camera-params'] = self.camera.params
@@ -308,6 +333,10 @@ class Scene(Element, component='scene.js', esm={'nicegui-scene': 'dist'}, defaul
         await self._initialized_event.wait()
 
     def _handle_click(self, e: GenericEventArguments) -> None:
+        intersections: dict[str, ScenePoint | None] = {
+            name: ScenePoint(x=pt['x'], y=pt['y'], z=pt['z']) if pt is not None else None
+            for name, pt in e.args['intersections'].items()
+        }
         arguments = SceneClickEventArguments(
             sender=self,
             client=self.client,
@@ -324,6 +353,7 @@ class Scene(Element, component='scene.js', esm={'nicegui-scene': 'dist'}, defaul
                 y=hit['point']['y'],
                 z=hit['point']['z'],
             ) for hit in e.args['hits']],
+            intersections=intersections,
         )
         for handler in self._click_handlers:
             handle_event(handler, arguments)

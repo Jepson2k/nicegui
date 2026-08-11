@@ -16,6 +16,11 @@ import {
 // Per-TransformControls axis-lock state. WeakMap keeps the entry alive only as long as the
 // controls instance exists, and avoids polluting `tc.userData` (which user code may also use).
 const transformAxisLocks = new WeakMap();
+const INTERSECTION_AXIS_NORMALS = {
+  x: new THREE.Vector3(1, 0, 0),
+  y: new THREE.Vector3(0, 1, 0),
+  z: new THREE.Vector3(0, 0, 1),
+};
 
 async function get_object(objects, object_id) {
   const object = objects.get(object_id);
@@ -317,12 +322,25 @@ export default {
         }
       }
     };
+    // Pre-compute THREE.Plane objects for the configured intersection planes (rebuilt by setter).
+    // Clone the normal so the per-axis singleton in INTERSECTION_AXIS_NORMALS is never mutated
+    // (intersectPlane doesn't mutate today, but normalize/applyMatrix4 in a future caller would).
+    this._buildIntersectionPlanes = () => {
+      const specs = this.intersectionPlanes || [];
+      this._intersectionPlanes = specs.map((spec) => {
+        const normal = (INTERSECTION_AXIS_NORMALS[spec.axis] || INTERSECTION_AXIS_NORMALS.z).clone();
+        return { name: spec.name, plane: new THREE.Plane(normal, -(spec.offset || 0)) };
+      });
+    };
+    this._buildIntersectionPlanes();
 
     const render = () => {
       requestAnimationFrame(() => setTimeout(() => render(), 1000 / this.fps));
       this.camera_tween?.update();
       this.controls.update(this.clock.getDelta());
       this._syncEffectsIfDirty();
+      const delta = this.clock.getDelta();
+      this.controls.update(delta);
       this.renderer.render(this.scene, this.camera);
       this.text_renderer.render(this.scene, this.camera);
       this.text3d_renderer.render(this.scene, this.camera);
@@ -446,10 +464,19 @@ export default {
     this.renderer.domElement.addEventListener("dblclick", handlePerObjectMouseEvent("dblclick"));
     this.renderer.domElement.addEventListener("contextmenu", handlePerObjectMouseEvent("contextmenu"));
 
+    raycaster.params.Line.threshold = this.raycasterThreshold ?? 1.0;
+    raycaster.params.Points.threshold = this.raycasterThreshold ?? 1.0;
+    this._raycaster = raycaster;
+    const _intersection = new THREE.Vector3();
     const click_handler = (mouseEvent) => {
-      let x = (mouseEvent.offsetX / this.renderer.domElement.width) * 2 - 1;
-      let y = -(mouseEvent.offsetY / this.renderer.domElement.height) * 2 + 1;
-      raycaster.setFromCamera({ x: x, y: y }, this.camera);
+      const x = (mouseEvent.offsetX / this.renderer.domElement.width) * 2 - 1;
+      const y = -(mouseEvent.offsetY / this.renderer.domElement.height) * 2 + 1;
+      raycaster.setFromCamera({ x, y }, this.camera);
+      const intersections = {};
+      for (const { name, plane } of this._intersectionPlanes) {
+        const hit = raycaster.ray.intersectPlane(plane, _intersection);
+        intersections[name] = hit ? { x: _intersection.x, y: _intersection.y, z: _intersection.z } : null;
+      }
       this.$emit("click3d", {
         hits: raycaster
           .intersectObjects(this.scene.children, true)
@@ -460,6 +487,7 @@ export default {
             object_name: owner.name,
             point: hit.point,
           })),
+        intersections,
         click_type: mouseEvent.type,
         button: mouseEvent.button,
         alt_key: mouseEvent.altKey,
@@ -775,6 +803,27 @@ export default {
     has_transform_controls(object_id) {
       return this.transform_controls.has(object_id);
     },
+    async set_clipping_planes(object_id, planes) {
+      const object = await get_object(this.objects, object_id);
+      if (!object) return;
+      // An empty `planes` array (Object3D.clear_clipping_planes / a fresh Object3D re-send)
+      // disables clipping for this subtree — three.js treats `mat.clippingPlanes = []` the same
+      // as `null` on the shader side. Async loaders (GLTF/STL) resolve before get_object
+      // returns, so the traversal always sees the loaded children.
+      const clipPlanes = planes.map((p) =>
+        new THREE.Plane(new THREE.Vector3(p.nx, p.ny, p.nz).normalize(), p.d));
+      object.mesh.traverse((child) => {
+        if (!child.material) return;
+        const mats = Array.isArray(child.material) ? child.material : [child.material];
+        mats.forEach((mat) => {
+          mat.clippingPlanes = clipPlanes;
+          mat.clipIntersection = false; // union: clip where ANY plane clips
+          mat.needsUpdate = true;
+        });
+      });
+      // Local clipping is opt-in on the renderer; flip it the first time anyone sets clipping planes.
+      if (clipPlanes.length) this.renderer.localClippingEnabled = true;
+    },
     async delete(object_id) {
       const object = await get_object(this.objects, object_id);
       this.objects.delete(object_id); // even if creation failed, the stale registry entry must go
@@ -911,5 +960,18 @@ export default {
     hoverColor: String,
     hoverOpacity: Number,
     hoverScale: Number,
+    raycasterThreshold: Number,
+    intersectionPlanes: Array,
+  },
+  watch: {
+    raycasterThreshold(value) {
+      if (!this._raycaster) return;
+      const t = value ?? 1.0;
+      this._raycaster.params.Line.threshold = t;
+      this._raycaster.params.Points.threshold = t;
+    },
+    intersectionPlanes() {
+      if (this._buildIntersectionPlanes) this._buildIntersectionPlanes();
+    },
   },
 };

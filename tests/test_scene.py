@@ -489,6 +489,139 @@ def test_rotate_with_order(screen: Screen):
     assert np.allclose(server_R, expected, atol=1e-6)
 
 
+def _wait_for_scene_ready(screen: Screen, scene_id: int) -> None:
+    screen.wait_for(lambda: screen.selenium.execute_script(
+        f'return !!getElement({scene_id}) && !!getElement({scene_id}).renderer'
+    ))
+
+
+def _count_clipping_planes(screen: Screen, scene_id: int, object_id: str) -> int:
+    return screen.selenium.execute_script(
+        f'const el = getElement({scene_id});'
+        # -1 while the scene or object is (re-)mounting, so wait_for polls instead of raising
+        'if (!el || !el.objects) return -1;'
+        f'const record = el.objects.get("{object_id}");'
+        'if (!record || !record.mesh) return -1;'
+        'let n = 0;'
+        'record.mesh.traverse((c) => {'
+        '  if (!c.material) return;'
+        '  const mats = Array.isArray(c.material) ? c.material : [c.material];'
+        '  for (const m of mats) if (m.clippingPlanes) n += m.clippingPlanes.length;'
+        '});'
+        'return n;'
+    )
+
+
+def test_set_clipping_planes(screen: Screen):
+    from nicegui import events
+    scene = None
+    box = None
+
+    @ui.page('/')
+    def page():
+        nonlocal scene, box
+        with ui.scene() as scene:
+            box = scene.box()
+
+    screen.open('/')
+    _wait_for_scene_ready(screen, scene.id)
+    box.set_clipping_planes([events.SceneClipPlane(nx=0, ny=0, nz=1, d=0)])
+    screen.wait_for(lambda: _count_clipping_planes(screen, scene.id, box.id) >= 1)
+    box.clear_clipping_planes()
+    screen.wait_for(lambda: _count_clipping_planes(screen, scene.id, box.id) == 0)
+
+
+def test_clipping_planes_survive_context_loss(screen: Screen):
+    from nicegui import events
+    scene = None
+    box = None
+
+    @ui.page('/')
+    def page():
+        nonlocal scene, box
+        with ui.scene() as scene:
+            box = scene.box()
+
+    screen.open('/')
+    _wait_for_scene_ready(screen, scene.id)
+    box.set_clipping_planes([events.SceneClipPlane(nx=0, ny=0, nz=1, d=2)])
+    screen.wait_for(lambda: _count_clipping_planes(screen, scene.id, box.id) >= 1)
+
+    # _resend() must replay the planes when the scene remounts after a WebGL context loss.
+    screen.selenium.execute_script(
+        'document.querySelector("canvas").getContext("webgl2").getExtension("WEBGL_lose_context").loseContext();'
+    )
+    screen.click('Click to re-initialize')
+    screen.wait_for(lambda: _count_clipping_planes(screen, scene.id, box.id) >= 1)
+
+
+def test_intersection_planes_in_click_event(screen: Screen):
+    from nicegui import events
+    scene = None
+    intersections: list = []
+
+    @ui.page('/')
+    def page():
+        nonlocal scene
+
+        def handle(e: events.SceneClickEventArguments):
+            intersections.append(e.intersections)
+        scene = ui.scene(
+            on_click=handle,
+            intersection_planes=[
+                events.SceneIntersectionPlane(name='ground', axis='z', offset=0),
+                events.SceneIntersectionPlane(name='wall', axis='x', offset=2),
+            ],
+        )
+
+    screen.open('/')
+    _wait_for_scene_ready(screen, scene.id)
+    canvas = screen.find_by_tag('canvas')
+    canvas.click()
+    screen.wait_for(lambda: bool(intersections))
+    keys = set(intersections[0].keys())
+    assert keys == {'ground', 'wall'}
+
+
+async def test_intersection_planes_validation(user: User):
+    from nicegui import events
+
+    with pytest.raises(ValueError, match='axis'):
+        events.SceneIntersectionPlane(name='foo', axis='w')  # type: ignore[arg-type]
+
+    @ui.page('/')
+    def page():
+        with pytest.raises(ValueError, match=r'[Dd]uplicate'):
+            ui.scene(intersection_planes=[
+                events.SceneIntersectionPlane(name='dup'),
+                events.SceneIntersectionPlane(name='dup'),
+            ])
+        ui.label('ok')
+
+    await user.open('/')
+    await user.should_see('ok')
+
+
+def test_raycaster_threshold_runtime_change(screen: Screen):
+    scene = None
+
+    @ui.page('/')
+    def page():
+        nonlocal scene
+        scene = ui.scene(raycaster_threshold=0.05)
+
+    screen.open('/')
+    _wait_for_scene_ready(screen, scene.id)
+    assert screen.selenium.execute_script(
+        f'return getElement({scene.id})._raycaster.params.Line.threshold'
+    ) == 0.05
+    scene._props['raycaster-threshold'] = 0.5
+    scene.update()
+    screen.wait_for(lambda: screen.selenium.execute_script(
+        f'return getElement({scene.id})._raycaster.params.Line.threshold'
+    ) == 0.5)
+
+
 async def test_dragend_after_object_deleted(user: User):
     events: list[str] = []
     scene = None
