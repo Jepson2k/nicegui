@@ -42,6 +42,56 @@ COMPLETION_ICON_TYPES = Literal[
     'variable',
 ]
 
+# Functional TypedDict syntax because `from` and `class` are Python keywords.
+MarkDecorationSpec = TypedDict(
+    'MarkDecorationSpec',
+    {
+        'kind': Literal['mark'],
+        'from': int,
+        'to': int,
+        'class': NotRequired[str],
+        'attributes': NotRequired[dict[str, str]],
+        'inclusiveStart': NotRequired[bool],
+        'inclusiveEnd': NotRequired[bool],
+    },
+)
+
+LineDecorationSpec = TypedDict(
+    'LineDecorationSpec',
+    {
+        'kind': Literal['line'],
+        'line': int,
+        'class': NotRequired[str],
+        'attributes': NotRequired[dict[str, str]],
+    },
+)
+
+ReplaceDecorationSpec = TypedDict(
+    'ReplaceDecorationSpec',
+    {
+        'kind': Literal['replace'],
+        'from': int,
+        'to': int,
+        'text': NotRequired[str],
+        'class': NotRequired[str],
+        'inclusive': NotRequired[bool],
+        'block': NotRequired[bool],
+    },
+)
+
+WidgetDecorationSpec = TypedDict(
+    'WidgetDecorationSpec',
+    {
+        'kind': Literal['widget'],
+        'position': int,
+        'text': str,
+        'class': NotRequired[str],
+        'side': NotRequired[Literal[-1, 1]],
+    },
+)
+
+DecorationSpec = MarkDecorationSpec | LineDecorationSpec | ReplaceDecorationSpec | WidgetDecorationSpec
+
 
 class CompletionItem(TypedDict):
     """Single autocomplete entry for the ``completions`` parameter and property.
@@ -147,6 +197,8 @@ class CodeMirror(KeyBindingElement, LineAnchorElement, ValueElement[str], Disabl
         complete_words_in_document: bool = DEFAULT_PROP | False,
         completion_info_html: bool = DEFAULT_PROP | False,
         tooltip_class: str | None = DEFAULT_PROP | None,
+        decorations: list[DecorationSpec] | None = None,
+        decoration_text_html: bool = False,
         line_tooltips: dict[int, str] | None = None,
         line_tooltip_html: bool = False,
     ) -> None:
@@ -213,6 +265,9 @@ class CodeMirror(KeyBindingElement, LineAnchorElement, ValueElement[str], Disabl
         :param tooltip_class: CSS class added to the autocomplete popup container.
             Combine with ``ui.add_css`` to style the popup.
             *Added in version X.Y.Z*
+        :param decorations: initial list of decoration specs applied to the editor;
+            spec offsets (``from``/``to``/``position``) are UTF-16 code units, not Python ``str`` indices (default: ``None``)
+        :param decoration_text_html: render the ``text`` field of replace/widget decorations as sanitized HTML rather than plain text (default: ``False``)
         :param line_tooltips: initial mapping of 1-indexed line numbers to tooltip content (default: ``None``, *added in version 3.13.0*)
         :param line_tooltip_html: render tooltip content as sanitized HTML rather than plain text (default: ``False``, *added in version 3.13.0*)
         """
@@ -243,6 +298,8 @@ class CodeMirror(KeyBindingElement, LineAnchorElement, ValueElement[str], Disabl
         self._props['complete-words-in-document'] = complete_words_in_document
         self._props['completion-info-html'] = completion_info_html
         self._props['tooltip-class'] = tooltip_class
+        self._props['decorations'] = decorations or []
+        self._props['decoration-text-html'] = decoration_text_html
         self._props['line-tooltips'] = line_tooltips or {}
         self._props['line-tooltip-html'] = line_tooltip_html
         self._update_method = 'setEditorValueFromProps'
@@ -495,6 +552,31 @@ class CodeMirror(KeyBindingElement, LineAnchorElement, ValueElement[str], Disabl
         *Added in version X.Y.Z*
         """
         self.run_method('triggerCompletion')
+    def decorations(self) -> list[DecorationSpec]:
+        """Decoration specs applied to the editor; mutating this list syncs to the client.
+
+        Decorations style or modify the editor's rendering without changing the underlying document.
+        Each entry is a :class:`MarkDecorationSpec`, :class:`LineDecorationSpec`,
+        :class:`ReplaceDecorationSpec`, or :class:`WidgetDecorationSpec` dict.
+        For mark and line decorations the ``class`` field produces the visible styling, so the host
+        application is responsible for shipping CSS for whatever class names it passes here.
+        The ``attributes`` field is applied as raw DOM attributes (including event handlers like
+        ``onclick``) and is not sanitized.
+        Do not pass untrusted input through it.
+
+        The ``from``, ``to`` and ``position`` fields are UTF-16 code-unit offsets into the document
+        (CodeMirror's native addressing).
+        These match Python ``str`` indices only for text in the Basic Multilingual Plane;
+        for a document containing emoji or other astral characters an offset computed from a Python
+        ``str`` index will be wrong, so account for surrogate pairs when computing offsets.
+
+        *Added in version 3.15.0*
+        """
+        return self._props['decorations']
+
+    @decorations.setter
+    def decorations(self, decorations: list[DecorationSpec] | None) -> None:
+        self._props['decorations'] = decorations or []
 
     @property
     def line_tooltips(self) -> dict[int, str]:

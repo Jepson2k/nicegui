@@ -2,11 +2,10 @@ import pytest
 from selenium.webdriver import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-
 from nicegui import ui
 from nicegui.testing import Screen
-
-# pylint: disable=protected-access
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
 
 def test_codemirror(screen: Screen):
@@ -16,7 +15,6 @@ def test_codemirror(screen: Screen):
 
     screen.open('/')
     screen.should_contain('Line 2')
-
 
 def test_supported_values(screen: Screen):
     values: dict[str, list[str]] = {}
@@ -38,7 +36,6 @@ def test_supported_values(screen: Screen):
     screen.wait_for('Done')
     assert values['languages'] == values['supported_languages']
     assert values['themes'] == values['supported_themes']
-
 
 @pytest.mark.parametrize('doc, sections, inserted, expected', [
     ('', [0, 1], [['A']], 'A'),
@@ -64,7 +61,6 @@ def test_change_set(screen: Screen, doc: str, sections: list[int], inserted: lis
     screen.open('/')
     assert editor._apply_change_set(sections, inserted) == expected
 
-
 def test_set_value_preserves_cursor(screen: Screen):
     editor = None
 
@@ -88,7 +84,6 @@ def test_set_value_preserves_cursor(screen: Screen):
 
     assert editor.value == 'Hello, Earth'
 
-
 def test_encode_codepoints():
     assert ui.codemirror._encode_codepoints('') == b''
     assert ui.codemirror._encode_codepoints('Hello') == bytes([1, 1, 1, 1, 1])
@@ -96,49 +91,81 @@ def test_encode_codepoints():
     assert ui.codemirror._encode_codepoints('Hello 🙂') == bytes([1, 1, 1, 1, 1, 1, 0, 1])
     assert ui.codemirror._encode_codepoints('😎😎😎') == bytes([0, 1, 0, 1, 0, 1])
 
+def test_line_tooltip_api(screen: Screen):
+    @ui.page('/')
+    def page():
+        editor = ui.codemirror('alpha\nbeta\ngamma').classes('w-24')
+        ui.button('Set tooltip on line 2', on_click=lambda: editor.line_tooltips.__setitem__(2, 'debug'))
+        ui.button('Set tooltip on line 3', on_click=lambda: editor.line_tooltips.__setitem__(3, 'info'))
+        ui.button('Delete tooltip on line 3', on_click=lambda: editor.line_tooltips.__delitem__(3))
+        ui.button('Update tooltips', on_click=lambda: editor.line_tooltips.update({2: 'warning'}))
+        ui.button('Replace tooltips', on_click=lambda: setattr(editor, 'line_tooltips', {1: 'error'}))
+        ui.button('Clear tooltips', on_click=lambda: editor.line_tooltips.clear())  # pylint: disable=unnecessary-lambda
+
+    screen.open('/')
+    screen.click('Set tooltip on line 2')
+    ActionChains(screen.selenium).move_to_element(screen.find('beta')).perform()
+    screen.should_contain('debug')
+
+    screen.click('Set tooltip on line 3')
+    ActionChains(screen.selenium).move_to_element(screen.find('gamma')).perform()
+    screen.should_contain('info')
+
+    screen.click('Delete tooltip on line 3')
+    ActionChains(screen.selenium).move_to_element(screen.find('gamma')).perform()
+    screen.wait(0.5)
+    screen.should_not_contain('info')
+
+    screen.click('Update tooltips')
+    ActionChains(screen.selenium).move_to_element(screen.find('beta')).perform()
+    screen.should_contain('warning')
+
+    screen.click('Replace tooltips')
+    ActionChains(screen.selenium).move_to_element(screen.find('alpha')).perform()
+    screen.should_contain('error')
+    ActionChains(screen.selenium).move_to_element(screen.find('beta')).perform()
+    screen.wait(0.5)
+    screen.should_not_contain('warning')
+
+    screen.click('Clear tooltips')
+    ActionChains(screen.selenium).move_to_element(screen.find('alpha')).perform()
+    screen.wait(0.5)
+    screen.should_not_contain('error')
+
+def test_line_tooltip_stick_to_text(screen: Screen):
+    @ui.page('/')
+    def page():
+        editor = ui.codemirror('abc').classes('w-24')
+        editor.line_tooltips[1] = 'tooltip'
+
+    screen.open('/')
+    ActionChains(screen.selenium).move_to_element(screen.find('abc')).click().send_keys(Keys.HOME, Keys.ENTER).perform()
+    ActionChains(screen.selenium).move_to_element(screen.find('abc')).perform()
+    screen.should_contain('tooltip')
+
+def test_line_tooltip_plain_text_default(screen: Screen):
+    @ui.page('/')
+    def page():
+        editor = ui.codemirror('hello').classes('w-24')
+        editor.line_tooltips[1] = 'a < b'
+
+    screen.open('/')
+    ActionChains(screen.selenium).move_to_element(screen.find('hello')).perform()
+    screen.should_contain('a < b')  # The tooltip should render the text as-is, not interpret it as HTML.
+
+def test_line_tooltip_html_sanitized(screen: Screen):
+    @ui.page('/')
+    def page():
+        editor = ui.codemirror('hello', line_tooltip_html=True).classes('w-24')
+        editor.line_tooltips[1] = '<b>bold</b><img src=x onerror="console.error(`X` + `SS`)">'
+
+    screen.open('/')
+    ActionChains(screen.selenium).move_to_element(screen.find('hello')).perform()
+    screen.should_contain('bold')  # The tooltip should render the allowed HTML...
+    assert 'XSS' not in screen.selenium.get_log('browser')  # ...but sanitize out any scripts.
 
 def test_selection_change_event(screen: Screen):
     events: list[tuple[int, int, int, int, bool]] = []
-def _rendered_labels(screen: Screen) -> list[str]:
-    return screen.selenium.execute_script(
-        'return Array.from(document.querySelectorAll(".cm-tooltip-autocomplete .cm-completionLabel"))'
-        '.map(e => e.textContent);'
-    )
-
-
-def _open_count(screen: Screen) -> int:
-    return screen.selenium.execute_script(
-        'return document.querySelectorAll(".cm-tooltip-autocomplete li").length'
-    )
-
-
-def test_completions_basic(screen: Screen):
-    @ui.page('/')
-    def page():
-        ui.codemirror('', completions=[
-            {'label': 'foo_bar', 'detail': 'a function', 'type': 'function', 'boost': 1,
-             'class_name': 'cm-foo'},
-            {'label': 'foo_baz', 'display_label': 'foo_baz (preferred)', 'type': 'function', 'boost': 99},
-            {'label': 'qux', 'type': 'variable'},
-        ])
-
-    screen.open('/')
-    cm = screen.selenium.find_element(By.XPATH, '//*[contains(@class, "cm-content")]')
-    cm.click()
-    cm.send_keys('foo')
-    screen.wait_for(lambda: _open_count(screen) == 2)
-    rendered = _rendered_labels(screen)
-    assert 'qux' not in rendered
-    assert rendered[0] == 'foo_baz (preferred)'
-    assert rendered[1] == 'foo_bar'
-    has_class = screen.selenium.execute_script(
-        'return Array.from(document.querySelectorAll(".cm-tooltip-autocomplete li"))'
-        '.some(li => li.classList.contains("cm-foo"));'
-    )
-    assert has_class
-
-
-def test_set_completions_replaces(screen: Screen):
     editor = None
 
     @ui.page('/')
@@ -166,7 +193,6 @@ def test_set_completions_replaces(screen: Screen):
     )
     screen.wait_for(lambda: (1, 1, 1, 3, False) in events)
 
-
 def test_selection_reemits_after_focus_change(screen: Screen):
     """The first post-focus selection emits even when it matches the last payload.
 
@@ -175,59 +201,6 @@ def test_selection_reemits_after_focus_change(screen: Screen):
     the dedupe cache is cleared on every focus transition.
     """
     events: list[tuple[int, int]] = []
-        editor = ui.codemirror('', completions=[{'label': 'banana'}])
-
-    screen.open('/')
-    cm = screen.selenium.find_element(By.XPATH, '//*[contains(@class, "cm-content")]')
-    editor.completions = [{'label': 'bar'}, {'label': 'baz'}]
-    # Wait for the new completions to land on the client before opening the
-    # popup — otherwise typing can race the websocket flush and trigger the
-    # autocomplete against the stale [banana] source.
-    screen.wait_for(lambda: screen.selenium.execute_script(
-        f'return getElement({editor.id})?.completions?.length === 2'
-    ))
-    cm.click()
-    cm.send_keys('ba')
-    screen.wait_for(lambda: _open_count(screen) == 2)
-    rendered = _rendered_labels(screen)
-    assert sorted(rendered) == ['bar', 'baz']  # banana is gone
-
-
-@pytest.mark.parametrize('replace, expect_print', [(False, True), (True, False)])
-def test_replace_language_completions(screen: Screen, replace: bool, expect_print: bool):
-    @ui.page('/')
-    def page():
-        ui.codemirror('', language='Python',
-                      completions=[{'label': 'rbt.move', 'type': 'function'}],
-                      replace_language_completions=replace)
-
-    screen.open('/')
-    cm = screen.selenium.find_element(By.XPATH, '//*[contains(@class, "cm-content")]')
-    cm.click()
-    cm.send_keys('print')
-    if expect_print:
-        screen.wait_for(lambda: 'print' in _rendered_labels(screen))
-    else:
-        # Replace-mode + a non-matching prefix should produce no popup. Wait briefly
-        # for the autocomplete machinery to settle, then assert nothing rendered.
-        screen.wait(0.5)
-        assert 'print' not in _rendered_labels(screen)
-
-
-def test_complete_words_in_document(screen: Screen):
-    @ui.page('/')
-    def page():
-        ui.codemirror('apple banana cherry\n', complete_words_in_document=True)
-
-    screen.open('/')
-    cm = screen.selenium.find_element(By.XPATH, '//*[contains(@class, "cm-content")]')
-    cm.click()
-    cm.send_keys(Keys.END)
-    cm.send_keys('app')
-    screen.wait_for(lambda: 'apple' in _rendered_labels(screen))
-
-
-def test_snippet_completion(screen: Screen):
     editor = None
 
     @ui.page('/')
@@ -257,45 +230,8 @@ def test_snippet_completion(screen: Screen):
     )
     screen.wait_for(lambda: events.count((2, 1)) >= 2)
 
-
 def test_focus_change_event(screen: Screen):
     events: list[bool] = []
-        editor = ui.codemirror('', completions=[
-            {'label': 'mysnippet', 'snippet': True,
-             'apply': 'for ${1:item} in ${2:iterable}:\n    ${3:pass}'},
-        ])
-
-    screen.open('/')
-    cm = screen.selenium.find_element(By.XPATH, '//*[contains(@class, "cm-content")]')
-    cm.click()
-    editor.trigger_completion()
-    screen.wait_for(lambda: 'mysnippet' in _rendered_labels(screen))
-    # CM6 first-option auto-selection is set on a microtask after the popup mounts; CI runners
-    # are slow enough that ENTER can race ahead of `selected: 0` being committed, in which case
-    # the keystroke falls through to a newline insert instead of accepting the completion.
-    screen.wait_for(lambda: screen.selenium.execute_script(
-        'return !!document.querySelector(\'.cm-tooltip-autocomplete li[aria-selected="true"]\')'
-    ))
-    cm.send_keys(Keys.ENTER)
-    screen.wait_for(lambda: 'for item in iterable:' in (editor.value or ''))
-    assert 'pass' in editor.value
-
-
-def test_tooltip_class(screen: Screen):
-    @ui.page('/')
-    def page():
-        ui.codemirror('', completions=[{'label': 'foo'}], tooltip_class='cm-popup-wide')
-
-    screen.open('/')
-    cm = screen.selenium.find_element(By.XPATH, '//*[contains(@class, "cm-content")]')
-    cm.click()
-    cm.send_keys('f')
-    screen.wait_for(lambda: screen.selenium.execute_script(
-        'return !!document.querySelector(".cm-tooltip-autocomplete.cm-popup-wide");'
-    ))
-
-
-def test_trigger_completion(screen: Screen):
     editor = None
 
     @ui.page('/')
@@ -315,7 +251,6 @@ def test_trigger_completion(screen: Screen):
     )
     screen.wait_for(lambda: False in events)
 
-
 def test_viewport_change_event(screen: Screen):
     events: list[tuple[int, int]] = []
     editor = None
@@ -333,7 +268,6 @@ def test_viewport_change_event(screen: Screen):
     editor.reveal_line(150)
     # After reveal_line, the viewport should report a range containing line 150.
     screen.wait_for(lambda: any(from_line <= 150 <= to_line for from_line, to_line in events))
-
 
 def test_geometry_change_event(screen: Screen):
     events: list[tuple[int, int, int]] = []
@@ -357,7 +291,6 @@ def test_geometry_change_event(screen: Screen):
     )
     screen.wait_for(lambda: any(height >= 200 for _, height, _ in events))
 
-
 def test_no_handler_no_traffic(screen: Screen):
     """Verify that dispatching a selection change emits NO event when no handler is registered.
 
@@ -366,18 +299,6 @@ def test_no_handler_no_traffic(screen: Screen):
     """
     events: list = []
     editor = None
-def _diagnostic_count(screen: Screen, suffix: str = '') -> int:
-    selector = f'.cm-lintRange{suffix}'
-    return screen.selenium.execute_script(f'return document.querySelectorAll({selector!r}).length;')
-
-
-def _lint_panel_present(screen: Screen) -> bool:
-    return screen.selenium.execute_script("return document.querySelector('.cm-panel-lint') !== null;")
-
-
-def test_diagnostics_property(screen: Screen):
-    editor = None
-    counts: dict[str, dict[str, int]] = {}
 
     @ui.page('/')
     def page():
@@ -396,10 +317,66 @@ def test_diagnostics_property(screen: Screen):
     screen.wait(0.5)  # give any (incorrect) emit time to arrive
     assert events == [], f'expected no traffic without an on_selection_change handler, got {events}'
 
-
 def test_debounce_override(screen: Screen):
     """Verify the debounce_ms override on the handler factory is honored by the JS dispatcher."""
     events: list[tuple[int, int]] = []
+    editor = None
+
+    @ui.page('/')
+    def page():
+        nonlocal editor
+        editor = ui.codemirror(
+            'Line 1\nLine 2\nLine 3\nLine 4\nLine 5',
+            on_selection_change=ui.codemirror.handler(
+                lambda e: events.append((e.line, e.column)),
+                debounce_ms=200,
+            ),
+        )
+
+    screen.open('/')
+    screen.should_contain('Line 1')
+    # Fire 5 rapid selection moves well inside the 200 ms debounce window.
+    screen.selenium.execute_script(
+        f'const el = getElement({editor.id});'
+        'for (let i = 1; i <= 5; i++) {'
+        '  el.editor.dispatch({selection: {anchor: el.editor.state.doc.line(i).from}});'
+        '}'
+    )
+    # Wait long enough for the trailing debounce to fire and any further frames to settle.
+    screen.wait_for(lambda: len(events) >= 1)
+    screen.wait(0.4)
+    assert len(events) == 1, f'expected exactly one debounced event, got {events}'
+    assert events[0][0] == 5, f'expected the trailing event on line 5, got {events[0]}'
+
+def test_reveal_line(screen: Screen):
+    editor = None
+
+    @ui.page('/')
+    def page():
+        nonlocal editor
+        editor = ui.codemirror('\n'.join(f'Line {i}' for i in range(1, 201)))
+
+    screen.open('/')
+    scroller = screen.selenium.find_element(By.XPATH, '//*[contains(@class, "cm-scroller")]')
+    initial_top = screen.selenium.execute_script('return arguments[0].scrollTop', scroller)
+    editor.reveal_line(150)
+    screen.wait_for(lambda: screen.selenium.execute_script('return arguments[0].scrollTop', scroller) > initial_top)
+
+def _diagnostic_count(screen: Screen, suffix: str = '') -> int:
+    selector = f'.cm-lintRange{suffix}'
+    return screen.selenium.execute_script(f'return document.querySelectorAll({selector!r}).length;')
+
+def _lint_panel_present(screen: Screen) -> bool:
+    return screen.selenium.execute_script("return document.querySelector('.cm-panel-lint') !== null;")
+
+def test_diagnostics_property(screen: Screen):
+    editor = None
+    counts: dict[str, dict[str, int]] = {}
+
+    @ui.page('/')
+    def page():
+        nonlocal editor
+        editor = ui.codemirror('Line 1\nLine 2\nLine 3')
 
         async def snapshot(key: str):
             counts[key] = await editor.get_diagnostic_count()
@@ -453,38 +430,12 @@ def test_debounce_override(screen: Screen):
     editor.toggle_lint_panel()
     screen.wait_for(lambda: not _lint_panel_present(screen))
 
-
 def test_diagnostic_message_default_is_plain_text(screen: Screen):
     editor = None
 
     @ui.page('/')
     def page():
         nonlocal editor
-        editor = ui.codemirror(
-            'Line 1\nLine 2\nLine 3\nLine 4\nLine 5',
-            on_selection_change=ui.codemirror.handler(
-                lambda e: events.append((e.line, e.column)),
-                debounce_ms=200,
-            ),
-        )
-
-    screen.open('/')
-    screen.should_contain('Line 1')
-    # Fire 5 rapid selection moves well inside the 200 ms debounce window.
-    screen.selenium.execute_script(
-        f'const el = getElement({editor.id});'
-        'for (let i = 1; i <= 5; i++) {'
-        '  el.editor.dispatch({selection: {anchor: el.editor.state.doc.line(i).from}});'
-        '}'
-    )
-    # Wait long enough for the trailing debounce to fire and any further frames to settle.
-    screen.wait_for(lambda: len(events) >= 1)
-    screen.wait(0.4)
-    assert len(events) == 1, f'expected exactly one debounced event, got {events}'
-    assert events[0][0] == 5, f'expected the trailing event on line 5, got {events[0]}'
-
-
-def test_reveal_line(screen: Screen):
         editor = ui.codemirror('alpha\nbeta\ngamma')
 
     screen.open('/')
@@ -505,20 +456,12 @@ def test_reveal_line(screen: Screen):
     assert not has_bold, 'default rendering must not interpret HTML'
     assert '<b>raw</b>' in text, 'default rendering shows raw tags as visible text'
 
-
 def test_diagnostic_message_html_opt_in_renders_sanitized(screen: Screen):
     editor = None
 
     @ui.page('/')
     def page():
         nonlocal editor
-        editor = ui.codemirror('\n'.join(f'Line {i}' for i in range(1, 201)))
-
-    screen.open('/')
-    scroller = screen.selenium.find_element(By.XPATH, '//*[contains(@class, "cm-scroller")]')
-    initial_top = screen.selenium.execute_script('return arguments[0].scrollTop', scroller)
-    editor.reveal_line(150)
-    screen.wait_for(lambda: screen.selenium.execute_script('return arguments[0].scrollTop', scroller) > initial_top)
         editor = ui.codemirror('alpha\nbeta\ngamma', diagnostic_message_html=True)
 
     screen.open('/')
@@ -537,6 +480,145 @@ def test_diagnostic_message_html_opt_in_renders_sanitized(screen: Screen):
         'return !!(p && p.querySelector("script"));'
     )
     hijacked = screen.selenium.execute_script('return window.__diag_hijack === 1')
+    assert not has_script, 'DOMPurify should have stripped <script>'
+    assert not hijacked, 'inline script must not have executed'
+
+def _rendered_labels(screen: Screen) -> list[str]:
+    return screen.selenium.execute_script(
+        'return Array.from(document.querySelectorAll(".cm-tooltip-autocomplete .cm-completionLabel"))'
+        '.map(e => e.textContent);'
+    )
+
+def _open_count(screen: Screen) -> int:
+    return screen.selenium.execute_script(
+        'return document.querySelectorAll(".cm-tooltip-autocomplete li").length'
+    )
+
+def test_completions_basic(screen: Screen):
+    @ui.page('/')
+    def page():
+        ui.codemirror('', completions=[
+            {'label': 'foo_bar', 'detail': 'a function', 'type': 'function', 'boost': 1,
+             'class_name': 'cm-foo'},
+            {'label': 'foo_baz', 'display_label': 'foo_baz (preferred)', 'type': 'function', 'boost': 99},
+            {'label': 'qux', 'type': 'variable'},
+        ])
+
+    screen.open('/')
+    cm = screen.selenium.find_element(By.XPATH, '//*[contains(@class, "cm-content")]')
+    cm.click()
+    cm.send_keys('foo')
+    screen.wait_for(lambda: _open_count(screen) == 2)
+    rendered = _rendered_labels(screen)
+    assert 'qux' not in rendered
+    assert rendered[0] == 'foo_baz (preferred)'
+    assert rendered[1] == 'foo_bar'
+    has_class = screen.selenium.execute_script(
+        'return Array.from(document.querySelectorAll(".cm-tooltip-autocomplete li"))'
+        '.some(li => li.classList.contains("cm-foo"));'
+    )
+    assert has_class
+
+def test_set_completions_replaces(screen: Screen):
+    editor = None
+
+    @ui.page('/')
+    def page():
+        nonlocal editor
+        editor = ui.codemirror('', completions=[{'label': 'banana'}])
+
+    screen.open('/')
+    cm = screen.selenium.find_element(By.XPATH, '//*[contains(@class, "cm-content")]')
+    editor.completions = [{'label': 'bar'}, {'label': 'baz'}]
+    # Wait for the new completions to land on the client before opening the
+    # popup — otherwise typing can race the websocket flush and trigger the
+    # autocomplete against the stale [banana] source.
+    screen.wait_for(lambda: screen.selenium.execute_script(
+        f'return getElement({editor.id})?.completions?.length === 2'
+    ))
+    cm.click()
+    cm.send_keys('ba')
+    screen.wait_for(lambda: _open_count(screen) == 2)
+    rendered = _rendered_labels(screen)
+    assert sorted(rendered) == ['bar', 'baz']  # banana is gone
+
+@pytest.mark.parametrize('replace, expect_print', [(False, True), (True, False)])
+def test_replace_language_completions(screen: Screen, replace: bool, expect_print: bool):
+    @ui.page('/')
+    def page():
+        ui.codemirror('', language='Python',
+                      completions=[{'label': 'rbt.move', 'type': 'function'}],
+                      replace_language_completions=replace)
+
+    screen.open('/')
+    cm = screen.selenium.find_element(By.XPATH, '//*[contains(@class, "cm-content")]')
+    cm.click()
+    cm.send_keys('print')
+    if expect_print:
+        screen.wait_for(lambda: 'print' in _rendered_labels(screen))
+    else:
+        # Replace-mode + a non-matching prefix should produce no popup. Wait briefly
+        # for the autocomplete machinery to settle, then assert nothing rendered.
+        screen.wait(0.5)
+        assert 'print' not in _rendered_labels(screen)
+
+def test_complete_words_in_document(screen: Screen):
+    @ui.page('/')
+    def page():
+        ui.codemirror('apple banana cherry\n', complete_words_in_document=True)
+
+    screen.open('/')
+    cm = screen.selenium.find_element(By.XPATH, '//*[contains(@class, "cm-content")]')
+    cm.click()
+    cm.send_keys(Keys.END)
+    cm.send_keys('app')
+    screen.wait_for(lambda: 'apple' in _rendered_labels(screen))
+
+def test_snippet_completion(screen: Screen):
+    editor = None
+
+    @ui.page('/')
+    def page():
+        nonlocal editor
+        editor = ui.codemirror('', completions=[
+            {'label': 'mysnippet', 'snippet': True,
+             'apply': 'for ${1:item} in ${2:iterable}:\n    ${3:pass}'},
+        ])
+
+    screen.open('/')
+    cm = screen.selenium.find_element(By.XPATH, '//*[contains(@class, "cm-content")]')
+    cm.click()
+    editor.trigger_completion()
+    screen.wait_for(lambda: 'mysnippet' in _rendered_labels(screen))
+    # CM6 first-option auto-selection is set on a microtask after the popup mounts; CI runners
+    # are slow enough that ENTER can race ahead of `selected: 0` being committed, in which case
+    # the keystroke falls through to a newline insert instead of accepting the completion.
+    screen.wait_for(lambda: screen.selenium.execute_script(
+        'return !!document.querySelector(\'.cm-tooltip-autocomplete li[aria-selected="true"]\')'
+    ))
+    cm.send_keys(Keys.ENTER)
+    screen.wait_for(lambda: 'for item in iterable:' in (editor.value or ''))
+    assert 'pass' in editor.value
+
+def test_tooltip_class(screen: Screen):
+    @ui.page('/')
+    def page():
+        ui.codemirror('', completions=[{'label': 'foo'}], tooltip_class='cm-popup-wide')
+
+    screen.open('/')
+    cm = screen.selenium.find_element(By.XPATH, '//*[contains(@class, "cm-content")]')
+    cm.click()
+    cm.send_keys('f')
+    screen.wait_for(lambda: screen.selenium.execute_script(
+        'return !!document.querySelector(".cm-tooltip-autocomplete.cm-popup-wide");'
+    ))
+
+def test_trigger_completion(screen: Screen):
+    editor = None
+
+    @ui.page('/')
+    def page():
+        nonlocal editor
         editor = ui.codemirror('', completions=[{'label': 'hello'}])
 
     screen.open('/')
@@ -544,7 +626,6 @@ def test_diagnostic_message_html_opt_in_renders_sanitized(screen: Screen):
     cm.click()
     editor.trigger_completion()
     screen.wait_for(lambda: 'hello' in _rendered_labels(screen))
-
 
 def test_completion_info_default_is_plain_text(screen: Screen):
     @ui.page('/')
@@ -567,7 +648,6 @@ def test_completion_info_default_is_plain_text(screen: Screen):
         'return !!(tip && tip.querySelector("b"));'
     )
     assert not has_bold, 'default rendering must not interpret HTML'
-
 
 def test_completion_info_html_opt_in_renders_sanitized(screen: Screen):
     @ui.page('/')
@@ -595,79 +675,282 @@ def test_completion_info_html_opt_in_renders_sanitized(screen: Screen):
     assert not has_script, 'DOMPurify should have stripped <script>'
     assert not hijacked, 'inline script must not have executed'
 
+def _wait_for_cm_mount(screen: Screen) -> None:
+    WebDriverWait(screen.selenium, 5).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, '.cm-content'))
+    )
 
-def test_line_tooltip_api(screen: Screen):
+def _line_decoration_count(screen: Screen, css_class: str) -> int:
+    return screen.selenium.execute_script(
+        f'return document.querySelectorAll(".cm-line.{css_class}").length;'
+    )
+
+def test_set_and_clear_line_decorations(screen: Screen):
+    editor = None
+
     @ui.page('/')
     def page():
-        editor = ui.codemirror('alpha\nbeta\ngamma').classes('w-24')
-        ui.button('Set tooltip on line 2', on_click=lambda: editor.line_tooltips.__setitem__(2, 'debug'))
-        ui.button('Set tooltip on line 3', on_click=lambda: editor.line_tooltips.__setitem__(3, 'info'))
-        ui.button('Delete tooltip on line 3', on_click=lambda: editor.line_tooltips.__delitem__(3))
-        ui.button('Update tooltips', on_click=lambda: editor.line_tooltips.update({2: 'warning'}))
-        ui.button('Replace tooltips', on_click=lambda: setattr(editor, 'line_tooltips', {1: 'error'}))
-        ui.button('Clear tooltips', on_click=lambda: editor.line_tooltips.clear())  # pylint: disable=unnecessary-lambda
+        nonlocal editor
+        editor = ui.codemirror('alpha\nbeta\ngamma\ndelta')
 
     screen.open('/')
-    screen.click('Set tooltip on line 2')
-    ActionChains(screen.selenium).move_to_element(screen.find('beta')).perform()
-    screen.should_contain('debug')
+    _wait_for_cm_mount(screen)
+    editor.decorations = [
+        {'kind': 'line', 'line': 1, 'class': 'my-line-class'},
+        {'kind': 'line', 'line': 3, 'class': 'my-line-class'},
+    ]
+    screen.wait_for(lambda: _line_decoration_count(screen, 'my-line-class') == 2)
+    editor.decorations = []
+    screen.wait_for(lambda: _line_decoration_count(screen, 'my-line-class') == 0)
 
-    screen.click('Set tooltip on line 3')
-    ActionChains(screen.selenium).move_to_element(screen.find('gamma')).perform()
-    screen.should_contain('info')
+def test_decorations_list_mutations_sync(screen: Screen):
+    editor = None
 
-    screen.click('Delete tooltip on line 3')
-    ActionChains(screen.selenium).move_to_element(screen.find('gamma')).perform()
-    screen.wait(0.5)
-    screen.should_not_contain('info')
-
-    screen.click('Update tooltips')
-    ActionChains(screen.selenium).move_to_element(screen.find('beta')).perform()
-    screen.should_contain('warning')
-
-    screen.click('Replace tooltips')
-    ActionChains(screen.selenium).move_to_element(screen.find('alpha')).perform()
-    screen.should_contain('error')
-    ActionChains(screen.selenium).move_to_element(screen.find('beta')).perform()
-    screen.wait(0.5)
-    screen.should_not_contain('warning')
-
-    screen.click('Clear tooltips')
-    ActionChains(screen.selenium).move_to_element(screen.find('alpha')).perform()
-    screen.wait(0.5)
-    screen.should_not_contain('error')
-
-
-def test_line_tooltip_stick_to_text(screen: Screen):
     @ui.page('/')
     def page():
-        editor = ui.codemirror('abc').classes('w-24')
-        editor.line_tooltips[1] = 'tooltip'
+        nonlocal editor
+        editor = ui.codemirror('one\ntwo\nthree')
 
     screen.open('/')
-    ActionChains(screen.selenium).move_to_element(screen.find('abc')).click().send_keys(Keys.HOME, Keys.ENTER).perform()
-    ActionChains(screen.selenium).move_to_element(screen.find('abc')).perform()
-    screen.should_contain('tooltip')
+    _wait_for_cm_mount(screen)
+    editor.decorations.append({'kind': 'line', 'line': 1, 'class': 'set-a'})
+    editor.decorations.append({'kind': 'line', 'line': 2, 'class': 'set-b'})
+    screen.wait_for(lambda: _line_decoration_count(screen, 'set-a') == 1
+                    and _line_decoration_count(screen, 'set-b') == 1)
+    del editor.decorations[0]
+    screen.wait_for(lambda: _line_decoration_count(screen, 'set-a') == 0
+                    and _line_decoration_count(screen, 'set-b') == 1)
+    editor.decorations.clear()
+    screen.wait_for(lambda: _line_decoration_count(screen, 'set-b') == 0)
 
+def _visible_text_length(screen: Screen) -> int:
+    return screen.selenium.execute_script(
+        'return document.querySelector(".cm-content").innerText.length;'
+    )
 
-def test_line_tooltip_plain_text_default(screen: Screen):
+def _replacement_widget_count(screen: Screen, css_class: str) -> int:
+    return screen.selenium.execute_script(
+        f'return document.querySelectorAll(".cm-content span.{css_class}").length;'
+    )
+
+def test_replace_decoration_collapses_range(screen: Screen):
+    editor = None
+
     @ui.page('/')
     def page():
-        editor = ui.codemirror('hello').classes('w-24')
-        editor.line_tooltips[1] = 'a < b'
+        nonlocal editor
+        editor = ui.codemirror('alpha\nbeta\ngamma')
 
     screen.open('/')
-    ActionChains(screen.selenium).move_to_element(screen.find('hello')).perform()
-    screen.should_contain('a < b')  # The tooltip should render the text as-is, not interpret it as HTML.
+    _wait_for_cm_mount(screen)
+    baseline = _visible_text_length(screen)
+    # 'beta\n' spans offsets 6..11 (5 chars + newline) — collapse hides those characters.
+    editor.decorations = [{'kind': 'replace', 'from': 6, 'to': 11}]
+    screen.wait_for(lambda: _visible_text_length(screen) < baseline)
+    editor.decorations = []
+    screen.wait_for(lambda: _visible_text_length(screen) == baseline)
 
+def test_replace_decoration_with_text(screen: Screen):
+    editor = None
 
-def test_line_tooltip_html_sanitized(screen: Screen):
     @ui.page('/')
     def page():
-        editor = ui.codemirror('hello', line_tooltip_html=True).classes('w-24')
-        editor.line_tooltips[1] = '<b>bold</b><img src=x onerror="console.error(`X` + `SS`)">'
+        nonlocal editor
+        editor = ui.codemirror('alpha\nbeta\ngamma')
 
     screen.open('/')
-    ActionChains(screen.selenium).move_to_element(screen.find('hello')).perform()
-    screen.should_contain('bold')  # The tooltip should render the allowed HTML...
-    assert 'XSS' not in screen.selenium.get_log('browser')  # ...but sanitize out any scripts.
+    _wait_for_cm_mount(screen)
+    editor.decorations = [
+        {'kind': 'replace', 'from': 6, 'to': 10, 'text': 'BETA-NEW', 'class': 'cm-test-suggest'},
+    ]
+    screen.wait_for(lambda: _replacement_widget_count(screen, 'cm-test-suggest') == 1)
+    widget_text = screen.selenium.execute_script(
+        'return document.querySelector(".cm-content span.cm-test-suggest").textContent;'
+    )
+    assert widget_text == 'BETA-NEW'
+    # Document is unchanged — the editor's value must still contain the original text.
+    assert 'beta' in editor.value
+    assert 'BETA-NEW' not in editor.value
+
+def test_widget_text_renders_html_sanitized(screen: Screen):
+    editor = None
+
+    @ui.page('/')
+    def page():
+        nonlocal editor
+        editor = ui.codemirror('alpha\nbeta\ngamma', decoration_text_html=True)
+
+    screen.open('/')
+    _wait_for_cm_mount(screen)
+    editor.decorations = [
+        {'kind': 'widget', 'position': 5,
+         'text': '<b>safe</b><script>window.__deco_hijack=1</script>',
+         'class': 'cm-test-html-widget'},
+    ]
+    screen.wait_for(lambda: screen.selenium.execute_script(
+        'const w = document.querySelector(".cm-content span.cm-test-html-widget");'
+        'return !!(w && w.querySelector("b"));'
+    ))
+    has_script = screen.selenium.execute_script(
+        'const w = document.querySelector(".cm-content span.cm-test-html-widget");'
+        'return !!(w && w.querySelector("script"));'
+    )
+    hijacked = screen.selenium.execute_script('return window.__deco_hijack === 1')
+    assert not has_script, 'DOMPurify should have stripped <script>'
+    assert not hijacked, 'inline script must not have executed'
+
+def test_widget_text_defaults_to_plain(screen: Screen):
+    editor = None
+
+    @ui.page('/')
+    def page():
+        nonlocal editor
+        editor = ui.codemirror('alpha\nbeta\ngamma')
+
+    screen.open('/')
+    _wait_for_cm_mount(screen)
+    editor.decorations = [
+        {'kind': 'widget', 'position': 5,
+         'text': '<b>literal</b>',
+         'class': 'cm-test-plain-widget'},
+    ]
+    screen.wait_for(lambda: _replacement_widget_count(screen, 'cm-test-plain-widget') == 1)
+    widget_html = screen.selenium.execute_script(
+        'return document.querySelector(".cm-content span.cm-test-plain-widget").innerHTML;'
+    )
+    widget_text = screen.selenium.execute_script(
+        'return document.querySelector(".cm-content span.cm-test-plain-widget").textContent;'
+    )
+    assert '<b>' not in widget_html, 'plain mode must render < and > as entities'
+    assert widget_text == '<b>literal</b>'
+
+def test_replace_decoration_block_mode(screen: Screen):
+    editor = None
+
+    @ui.page('/')
+    def page():
+        nonlocal editor
+        editor = ui.codemirror('alpha\nbeta\ngamma\ndelta')
+
+    screen.open('/')
+    _wait_for_cm_mount(screen)
+    # Lines 2-3 ('beta\ngamma') span offsets 6..16 — must cover full lines for block mode.
+    editor.decorations = [{
+        'kind': 'replace', 'from': 6, 'to': 16,
+        'text': '{ ... folded ... }', 'class': 'cm-test-fold', 'block': True,
+    }]
+    screen.wait_for(lambda: _replacement_widget_count(screen, 'cm-test-fold') == 1)
+    visible = screen.selenium.execute_script(
+        'return document.querySelector(".cm-content").innerText;'
+    )
+    assert 'beta' not in visible
+    assert 'gamma' not in visible
+    assert '{ ... folded ... }' in visible
+
+def test_mark_decoration_styles_range(screen: Screen):
+    editor = None
+
+    @ui.page('/')
+    def page():
+        nonlocal editor
+        editor = ui.codemirror('alpha\nbeta\ngamma')
+
+    screen.open('/')
+    _wait_for_cm_mount(screen)
+    editor.decorations = [{
+        'kind': 'mark', 'from': 6, 'to': 10,
+        'class': 'cm-test-mark', 'attributes': {'data-marker': 'beta'},
+    }]
+    screen.wait_for(lambda: _replacement_widget_count(screen, 'cm-test-mark') == 1)
+    marker_attr = screen.selenium.execute_script(
+        'return document.querySelector(".cm-content span.cm-test-mark").getAttribute("data-marker");'
+    )
+    assert marker_attr == 'beta'
+    assert editor.value == 'alpha\nbeta\ngamma'
+    editor.decorations = []
+    screen.wait_for(lambda: _replacement_widget_count(screen, 'cm-test-mark') == 0)
+
+def test_widget_decoration_inserts_text(screen: Screen):
+    editor = None
+
+    @ui.page('/')
+    def page():
+        nonlocal editor
+        editor = ui.codemirror('alpha\nbeta\ngamma')
+
+    screen.open('/')
+    _wait_for_cm_mount(screen)
+    editor.decorations = [
+        {'kind': 'widget', 'position': 5, 'text': '<-- end of alpha', 'class': 'cm-test-hint'},
+    ]
+    screen.wait_for(lambda: _replacement_widget_count(screen, 'cm-test-hint') == 1)
+    widget_text = screen.selenium.execute_script(
+        'return document.querySelector(".cm-content span.cm-test-hint").textContent;'
+    )
+    assert widget_text == '<-- end of alpha'
+    # Document is unchanged — widgets are presentation only.
+    assert editor.value == 'alpha\nbeta\ngamma'
+
+def test_invalid_decoration_specs_skipped_not_fatal(screen: Screen):
+    editor = None
+
+    @ui.page('/')
+    def page():
+        nonlocal editor
+        editor = ui.codemirror('alpha\nbeta\ngamma')
+
+    screen.open('/')
+    _wait_for_cm_mount(screen)
+    # A type-invalid spec (missing 'line') and an out-of-range spec must each be skipped with a
+    # warning rather than throwing and voiding the whole batch or silently retargeting another line.
+    editor.decorations = [
+        {'kind': 'line'},
+        {'kind': 'line', 'line': 9999, 'class': 'out-of-range'},
+        {'kind': 'line', 'line': 2, 'class': 'valid'},
+    ]
+    screen.wait_for(lambda: _line_decoration_count(screen, 'valid') == 1)
+    assert _line_decoration_count(screen, 'out-of-range') == 0
+
+def test_decorations_track_document_edits(screen: Screen):
+    editor = None
+
+    @ui.page('/')
+    def page():
+        nonlocal editor
+        editor = ui.codemirror('alpha\nbeta\ngamma')
+
+    screen.open('/')
+    _wait_for_cm_mount(screen)
+    editor.decorations = [{'kind': 'mark', 'from': 6, 'to': 10, 'class': 'cm-test-track'}]
+    screen.wait_for(lambda: _replacement_widget_count(screen, 'cm-test-track') == 1)
+    assert screen.selenium.execute_script(
+        'return document.querySelector(".cm-content span.cm-test-track").textContent;') == 'beta'
+    # Insert two characters before the mark; a mapped decoration follows "beta" instead of
+    # staying at the now-stale absolute offsets 6..10.
+    editor.value = 'XX' + editor.value
+    screen.wait_for(lambda: screen.selenium.execute_script(
+        'return document.querySelector(".cm-content").innerText.startsWith("XXalpha");'))
+    marked = screen.selenium.execute_script(
+        'const s = document.querySelector(".cm-content span.cm-test-track"); return s ? s.textContent : null;')
+    assert marked == 'beta'
+
+def test_decoration_inclusive_end_extends_mark(screen: Screen):
+    editor = None
+
+    @ui.page('/')
+    def page():
+        nonlocal editor
+        editor = ui.codemirror('alpha\nbeta\ngamma')
+
+    screen.open('/')
+    _wait_for_cm_mount(screen)
+    editor.decorations = [{'kind': 'mark', 'from': 6, 'to': 10, 'inclusiveEnd': True, 'class': 'cm-test-incl'}]
+    screen.wait_for(lambda: _replacement_widget_count(screen, 'cm-test-incl') == 1)
+    # Insert exactly at the mark's right edge (offset 10). Only a live inclusiveEnd grows the mark
+    # over the new character; a plain mapped mark (default exclusive end) would still read "beta".
+    editor.value = editor.value[:10] + 'Z' + editor.value[10:]
+    screen.wait_for(lambda: screen.selenium.execute_script(
+        'return document.querySelector(".cm-content").innerText.includes("betaZ");'))
+    grown = screen.selenium.execute_script(
+        'const s = document.querySelector(".cm-content span.cm-test-incl"); return s ? s.textContent : null;')
+    assert grown == 'betaZ'
