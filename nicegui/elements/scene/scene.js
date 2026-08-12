@@ -338,7 +338,6 @@ export default {
     const render = () => {
       requestAnimationFrame(() => setTimeout(() => render(), 1000 / this.fps));
       this.camera_tween?.update();
-      this.controls.update(this.clock.getDelta());
       this._syncEffectsIfDirty();
       const delta = this.clock.getDelta();
       this.controls.update(delta);
