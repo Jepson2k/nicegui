@@ -133,7 +133,8 @@ def custom_completions_demo() -> None:
 
 @doc.demo('Decorations', '''
     The `decorations` property is a mutable list of styled overlays on top of the editor's text,
-    without modifying the document. There are four kinds:
+    without modifying the document.
+    There are four kinds:
 
     - **mark** — style a character range
     - **line** — style an entire line
@@ -146,6 +147,8 @@ def custom_completions_demo() -> None:
     That flag only covers `text`: the `attributes` field on mark and line decorations is always
     applied as raw DOM attributes (including handlers like `onclick`) and is never sanitized,
     so never pass untrusted input through it.
+
+    *Added in version 3.17.0*
 ''')
 def decorations_demo() -> None:
     ui.add_head_html('''

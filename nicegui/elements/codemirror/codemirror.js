@@ -2,7 +2,8 @@ import * as CM from "nicegui-codemirror";
 
 // A RangeSet StateField whose ranges remap through document edits.
 // Dispatching setEffect.of(ranges) replaces the whole set.
-function defineRemappableRangeSet() {
+// `provide` is handed to StateField.define for fields that feed a facet; leaving it out is fine.
+function defineRemappableRangeSet(provide) {
   const setEffect = CM.StateEffect.define(); // value: list of ranges (replaces all)
   const field = CM.StateField.define({
     create() {
@@ -15,6 +16,7 @@ function defineRemappableRangeSet() {
       }
       return set;
     },
+    provide,
   });
   return { setEffect, field };
 }
@@ -75,25 +77,13 @@ const { setEffect: setTooltipsEffect, field: tooltipField } = defineRemappableRa
 // range through document edits — a mark on "beta" follows the text, and the mark/replace
 // inclusivity options actually affect how ranges grow at their edges. A new decoration list
 // from the server replaces the whole set via setDecorationsEffect.
-const setDecorationsEffect = CM.StateEffect.define();
-
-const decorationField = CM.StateField.define({
-  create() {
-    return CM.Decoration.none;
-  },
-  update(deco, tr) {
-    deco = deco.map(tr.changes);
-    for (const effect of tr.effects) {
-      if (effect.is(setDecorationsEffect)) {
-        deco = CM.Decoration.set(effect.value, true);
-      }
-    }
-    return deco;
-  },
-  // Providing decorations from a field (rather than a plugin) is also what CM6 requires for
-  // block replace/widget decorations to work.
-  provide: (field) => CM.EditorView.decorations.from(field),
-});
+// A DecorationSet is a RangeSet: Decoration.none is RangeSet.empty and Decoration.set(v, true)
+// is RangeSet.of(v, true), so the shared factory covers decorations as well.
+// Providing them from a field (rather than a plugin) is what CM6 requires for block
+// replace/widget decorations to work.
+const { setEffect: setDecorationsEffect, field: decorationField } = defineRemappableRangeSet((field) =>
+  CM.EditorView.decorations.from(field),
+);
 
 export default {
   template: `
@@ -164,11 +154,8 @@ export default {
     tooltipClass() {
       this.rebuildCompletions();
     },
-    decorations: {
-      deep: true,
-      handler(newDecorations) {
-        this.setDecorations(newDecorations);
-      },
+    decorations(newDecorations) {
+      this.setDecorations(newDecorations);
     },
     keymap() {
       this.setKeymap();
@@ -506,22 +493,33 @@ export default {
       }
       this.editor.dispatch({ effects: setDecorationsEffect.of(all) });
     },
+    // Validate a spec's from/to pair and clamp it into the document.
+    // Warns and returns null for a range that cannot be used, so the caller skips just this spec.
+    _clampRange(spec, doc) {
+      if (!Number.isInteger(spec.from) || !Number.isInteger(spec.to)) {
+        logAndEmit(
+          "warning",
+          `decorations: ${spec.kind} requires integer 'from' and 'to' (got from=${spec.from}, to=${spec.to})`,
+        );
+        return null;
+      }
+      if (spec.from > spec.to) {
+        logAndEmit("warning", `decorations: ${spec.kind} has from > to (from=${spec.from}, to=${spec.to})`);
+        return null;
+      }
+      const from = Math.max(0, Math.min(spec.from, doc.length));
+      const to = Math.max(from, Math.min(spec.to, doc.length));
+      return { from, to };
+    },
     _createDecoration(spec) {
       const doc = this.editor.state.doc;
       // Props arrive as user-supplied JSON; the Python TypedDicts enforce nothing at runtime, so
       // every numeric field is validated here. Bad specs are warned-and-skipped (returning null)
       // rather than thrown, so one malformed entry never voids the rest of the batch.
       if (spec.kind === "mark") {
-        if (!Number.isInteger(spec.from) || !Number.isInteger(spec.to)) {
-          logAndEmit("warning", `decorations: mark requires integer 'from' and 'to' (got from=${spec.from}, to=${spec.to})`);
-          return null;
-        }
-        if (spec.from > spec.to) {
-          logAndEmit("warning", `decorations: mark has from > to (from=${spec.from}, to=${spec.to})`);
-          return null;
-        }
-        const from = Math.max(0, Math.min(spec.from, doc.length));
-        const to = Math.max(from, Math.min(spec.to, doc.length));
+        const range = this._clampRange(spec, doc);
+        if (!range) return null;
+        const { from, to } = range;
         if (from === to) {
           // CodeMirror rejects zero-length mark ranges; skip cleanly instead of letting it throw
           // into the setDecorations backstop (which would log at error level).
@@ -547,16 +545,19 @@ export default {
         return CM.Decoration.line(lineSpec).range(line.from);
       }
       if (spec.kind === "replace") {
-        if (!Number.isInteger(spec.from) || !Number.isInteger(spec.to)) {
-          logAndEmit("warning", `decorations: replace requires integer 'from' and 'to' (got from=${spec.from}, to=${spec.to})`);
+        const range = this._clampRange(spec, doc);
+        if (!range) return null;
+        const { from, to } = range;
+        if (spec.text !== undefined && typeof spec.text !== "string") {
+          logAndEmit("warning", `decorations: replace 'text' must be a string (got ${JSON.stringify(spec.text)})`);
           return null;
         }
-        if (spec.from > spec.to) {
-          logAndEmit("warning", `decorations: replace has from > to (from=${spec.from}, to=${spec.to})`);
+        // CodeMirror rejects an empty replace range unless it is inclusive — which `block` implies.
+        // Skip cleanly instead of letting it throw into the setDecorations backstop.
+        if (from === to && !(spec.inclusive ?? !!spec.block)) {
+          logAndEmit("warning", `decorations: replace range is empty (from=${spec.from}, to=${spec.to})`);
           return null;
         }
-        const from = Math.max(0, Math.min(spec.from, doc.length));
-        const to = Math.max(from, Math.min(spec.to, doc.length));
         if (spec.block) {
           // CodeMirror requires block-replace ranges to span full lines; otherwise it throws
           // out of editor.dispatch and breaks the editor for the rest of the page.
@@ -577,6 +578,11 @@ export default {
       if (spec.kind === "widget") {
         if (!Number.isInteger(spec.position)) {
           logAndEmit("warning", `decorations: widget requires integer 'position' (got ${spec.position})`);
+          return null;
+        }
+        if (typeof spec.text !== "string") {
+          // Without it the widget would silently render an empty span.
+          logAndEmit("warning", `decorations: widget requires a string 'text' (got ${JSON.stringify(spec.text)})`);
           return null;
         }
         const pos = Math.max(0, Math.min(spec.position, doc.length));
