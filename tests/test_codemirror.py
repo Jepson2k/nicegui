@@ -725,12 +725,6 @@ def test_completion_info_html_opt_in_renders_sanitized(screen: Screen):
     assert not hijacked, 'inline script must not have executed'
 
 
-def _wait_for_cm_mount(screen: Screen) -> None:
-    WebDriverWait(screen.selenium, 5).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, '.cm-content'))
-    )
-
-
 def _line_decoration_count(screen: Screen, css_class: str) -> int:
     return screen.selenium.execute_script(
         f'return document.querySelectorAll(".cm-line.{css_class}").length;'
