@@ -424,6 +424,7 @@ export default {
     triggerCompletion() {
       if (!this.editor) return;
       CM.startCompletion(this.editor);
+    },
     setDecorations(decorations) {
       // The server marks `decorations` as a preserved prop on unrelated updates, so this only runs on a
       // deliberate write, which re-applies every spec at its declared offset, as line anchors do.
