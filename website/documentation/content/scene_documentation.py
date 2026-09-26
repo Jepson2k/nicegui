@@ -167,6 +167,19 @@ def point_clouds() -> None:
         .on_value_change(lambda e: point_cloud.set_points(*generate_data(e.value)))
 
 
+@doc.demo('Text labels', '''
+    The `text` method adds a 2D label which always faces the camera, `text3d` a label placed in 3D space.
+    Both take the text and a CSS style string and can be updated in place with `set_text` and `set_style`.
+
+    *Updated in version 3.18.0: `set_text` and `set_style` update a label in place.*
+''')
+def text_labels() -> None:
+    with ui.scene(width=285, height=220) as scene:
+        label = scene.text('Hello', 'color: #4488ff').move(z=1)
+
+    ui.button('Update', on_click=lambda: label.set_text('Updated').set_style('color: #ff8800'))
+
+
 @doc.demo('Wait for Initialization', '''
     You can wait for the scene to be initialized with the `initialized` method.
     This demo animates a camera movement after the scene has been fully loaded.

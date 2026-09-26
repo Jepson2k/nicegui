@@ -1,10 +1,18 @@
 import { CSS3DObject } from "nicegui-scene";
 
 export default class Text3D {
+  div;
+
   create_mesh(text, style) {
-    const div = document.createElement("div");
-    div.textContent = text;
-    div.style.cssText = "user-select:none;" + style;
-    return new CSS3DObject(div);
+    this.div = document.createElement("div");
+    this.set_text(text);
+    this.set_style(style);
+    return new CSS3DObject(this.div);
+  }
+  set_text(text) {
+    this.div.textContent = text;
+  }
+  set_style(style) {
+    this.div.style.cssText = "user-select:none;" + style;
   }
 }
