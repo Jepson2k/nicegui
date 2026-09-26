@@ -487,6 +487,8 @@ def hover_effect_catalog() -> None:
     `mode='translate'` (default), `'rotate'`, or `'scale'` selects the gizmo type.
     The host application receives `on_transform`, `on_transform_start`, and `on_transform_end`
     events with the object's local coordinates, world coordinates (`wx`, `wy`, `wz`), and rotation.
+    Pass `translation_snap` (scene units) or `rotation_snap` (radians) to snap the drag to a grid.
+    Both can be changed later with `set_transform_translation_snap` and `set_transform_rotation_snap`.
 ''')
 def transform_controls_demo() -> None:
     from nicegui import events
@@ -497,7 +499,8 @@ def transform_controls_demo() -> None:
     with ui.scene(width=320, height=240, on_transform_end=show).classes('w-full h-64') as scene:
         gizmo_box = scene.box(2, 2, 2).material('SteelBlue').hover_effect('glow', color='#ffaa33')
 
-    ui.button('Translate', on_click=lambda: gizmo_box.enable_transform_controls(mode='translate'))
+    ui.button('Translate',
+              on_click=lambda: gizmo_box.enable_transform_controls(mode='translate', translation_snap=0.5))
     ui.button('Rotate', on_click=lambda: gizmo_box.enable_transform_controls(mode='rotate'))
     ui.button('Disable', on_click=gizmo_box.disable_transform_controls)
 
