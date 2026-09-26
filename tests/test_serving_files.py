@@ -1,9 +1,15 @@
+import asyncio
+import gc
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
 
-from nicegui import __version__, app, ui
+from nicegui import __version__, app, helpers, ui
+from nicegui.app.range_response import get_range_response
 from nicegui.testing import Screen
 
 from .test_helpers import TEST_DIR
@@ -146,6 +152,45 @@ def test_adding_single_static_file(screen: Screen):
         assert 'max-age=3456' in r.headers['Cache-Control']
 
 
+@pytest.mark.parametrize('add_file', [app.add_static_file, app.add_media_file], ids=['static', 'media'])
+def test_single_use_file_is_served_exactly_once(screen: Screen, secret_file: Path, add_file: Callable[..., str]):
+    @ui.page('/')
+    def page():
+        ui.label('Hello, world!')
+
+    screen.open('/')
+    url_path = add_file(local_file=secret_file, single_use=True)
+    assert helpers.hash_file_path(secret_file.resolve()) not in url_path, 'URL must not be derivable from the file path'
+    assert add_file(local_file=secret_file, single_use=True) != url_path, 'URLs must not repeat'
+    route_count = len(app.routes)
+
+    with httpx.Client() as http_client:
+        url = f'http://localhost:{Screen.PORT}{url_path}'
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            responses = list(pool.map(lambda _: http_client.get(url), range(12)))
+        served = [r for r in responses if r.status_code == 200]
+        assert len(served) == 1, 'a single-use route must be served exactly once'
+        assert all(r.status_code == 404 for r in responses if r is not served[0]), 'all other requests must get 404'
+        assert served[0].text == 'TOP SECRET DATA'
+        assert served[0].headers['Cache-Control'] == 'no-store'
+        assert len(app.routes) == route_count - 1, 'the consumed route should be gone'
+        assert http_client.get(url).status_code == 404
+
+
+def test_single_use_media_file_partial_content_is_not_cacheable(screen: Screen, secret_file: Path):
+    @ui.page('/')
+    def page():
+        ui.label('Hello, world!')
+
+    screen.open('/')
+    url_path = app.add_media_file(local_file=secret_file, single_use=True)
+
+    with httpx.Client() as http_client:
+        ranged = http_client.get(f'http://localhost:{Screen.PORT}{url_path}', headers={'Range': 'bytes=0-3'})
+        assert ranged.status_code == 206
+        assert ranged.headers['Cache-Control'] == 'no-store', 'partial content must not be cacheable either'
+
+
 def test_auto_serving_file_from_image_source(screen: Screen):
     @ui.page('/')
     def page():
@@ -214,3 +259,43 @@ def test_cache_control_header_of_static_files(screen: Screen):
     # static resources are _not_ served with cache-control headers from `ui.run`
     response3 = httpx.get(f'http://localhost:{Screen.PORT}/static/examples/slideshow/slides/slide1.jpg', timeout=5)
     assert 'immutable' not in response3.headers.get('Cache-Control', '')
+
+
+def test_streamed_media_file_handle_is_released_on_teardown(monkeypatch: pytest.MonkeyPatch):
+    """Abandoning a range stream must close the file handle even if the event loop is already gone.
+
+    A client (e.g. a browser playing a video) can disconnect mid-stream. Starlette does not
+    ``aclose()`` the response body iterator on disconnect, so the generator is only finalized by the
+    garbage collector. If that happens once the event loop is gone, an *async* close cannot run and
+    the handle leaks, surfacing as a sporadic ``PytestUnraisableExceptionWarning`` at teardown.
+    """
+    opened_files = []
+    real_open = open
+
+    def tracking_open(*args, **kwargs):
+        file = real_open(*args, **kwargs)
+        opened_files.append(file)
+        return file
+
+    monkeypatch.setattr('builtins.open', tracking_open)
+
+    async def _first_chunk(gen):
+        return await gen.__anext__()  # created inside the loop so the finalizer hook is captured
+
+    generator = get_range_response(VIDEO_FILE, SimpleNamespace(headers={'range': 'bytes=0-1999'}),
+                                   chunk_size=64).body_iterator
+    loop = asyncio.new_event_loop()
+    try:
+        # First-iterate *inside* the running loop, as uvicorn/Starlette does: this captures the asyncio
+        # finalizer hook on the generator, so a later GC on the closed loop cannot run its `finally:`
+        # (the only path that reproduces the CI leak; iterating from outside the loop hides it).
+        loop.run_until_complete(_first_chunk(generator))  # open the file and yield once, then suspend
+    finally:
+        loop.close()  # tear down without aclose(), as Starlette does on a client disconnect
+
+    del generator
+    gc.collect()
+
+    media_files = [f for f in opened_files if f.name == str(VIDEO_FILE)]
+    assert media_files, 'the media file was never opened'
+    assert all(f.closed for f in media_files), 'file handle was not closed on teardown'

@@ -41,11 +41,12 @@ class SubPages(Element, component='sub_pages.js', default_classes='nicegui-sub-p
         :param show_404: whether to show a 404 error message if the full path could not be consumed
             (can be useful for dynamically created nested sub pages) (default: ``True``)
         """
+        routes = routes or {}
+        for path in routes:
+            SubPages._validate_route(path)  # NOTE: must not touch self, the element is not registered yet
         super().__init__()
         self._router = context.client.sub_pages_router
-        self._routes = routes or {}
-        for path in self._routes:
-            self._validate_route(path)
+        self._routes = routes
         parent_sub_pages_element = next((el for el in self.ancestors() if isinstance(el, SubPages)), None)
         self._rendered_path = ''
         self._root_path = parent_sub_pages_element._rendered_path if parent_sub_pages_element else root_path
@@ -105,9 +106,9 @@ class SubPages(Element, component='sub_pages.js', default_classes='nicegui-sub-p
                     self._set_match(None)
 
     def _render_page(self, match: RouteMatch) -> bool:
-        kwargs = PageArguments.build_kwargs(match, self, self._data)
         self._rendered_path = f'{self._root_path or ""}{match.path}'
         try:
+            kwargs = PageArguments.build_kwargs(match, self, self._data)
             result = match.builder(**kwargs)
         except Exception as e:
             self.clear()  # clear partial content created before the exception
@@ -122,7 +123,9 @@ class SubPages(Element, component='sub_pages.js', default_classes='nicegui-sub-p
                     try:
                         await result
                     except Exception as e:
-                        self.client.handle_exception(e)
+                        client = self._client()
+                        if client is not None:
+                            client.handle_exception(e)
                         raise
 
             task = background_tasks.create(background_task(), name=f'building sub_page {match.pattern}')
@@ -196,15 +199,18 @@ class SubPages(Element, component='sub_pages.js', default_classes='nicegui-sub-p
 
     @staticmethod
     def _validate_route(path: str) -> None:
-        for parameter in re.findall(r'\{(.*?)\}', path):
-            if not re.fullmatch(r'\w+', parameter):
+        parameters = re.findall(r'\{(.*?)\}', path)
+        for parameter in parameters:
+            if not parameter.isidentifier():
                 raise ValueError(
                     f'Invalid route "{path}": the parameter "{{{parameter}}}" is not supported. '
-                    'ui.sub_pages only supports single-segment "{name}" parameters, '
+                    'ui.sub_pages only supports single-segment "{name}" parameters that are valid Python identifiers, '
                     'not Starlette-style converters like "{name:path}". '
                     'For wildcard routing, use show_404=False and read PageArguments.remaining_path '
                     '(see https://nicegui.io/documentation/sub_pages).'
                 )
+        if len(set(parameters)) != len(parameters):
+            raise ValueError(f'Invalid route "{path}": parameter names must be unique.')
 
     @staticmethod
     def _match_path(pattern: str, path: str) -> dict[str, str] | None:
@@ -212,12 +218,16 @@ class SubPages(Element, component='sub_pages.js', default_classes='nicegui-sub-p
             return {} if pattern == path else None
 
         regex_pattern = re.escape(pattern)
-        for match in re.finditer(r'\\{(\w+)\\}', regex_pattern):
+        for match in re.finditer(r'\\{(.*?)\\}', regex_pattern):
             param_name = match.group(1)
             regex_pattern = regex_pattern.replace(f'\\{{{param_name}\\}}', f'(?P<{param_name}>[^/]+)')
 
         regex_match = re.match(f'^{regex_pattern}$', path)
         return regex_match.groupdict() if regex_match else None
+
+    def _handle_delete(self) -> None:
+        self._cancel_active_tasks()  # stop pending builders so they don't touch the deleted client
+        super()._handle_delete()
 
     def _cancel_active_tasks(self) -> None:
         for task in self._active_tasks:

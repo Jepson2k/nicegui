@@ -145,7 +145,9 @@ class Element(Visibility):
             return None
         parent_slot = self._parent_slot()
         if parent_slot is None:
-            raise RuntimeError('The parent slot of the element has been deleted.')
+            name = self.tag if type(self) is Element else type(self).__name__  # pylint: disable=unidiomatic-typecheck
+            markers = f', markers={",".join(self._markers)}' if self._markers else ''
+            raise RuntimeError(f'The parent slot of {name}(id={self.id}{markers}) has been deleted.')
         return parent_slot
 
     @parent_slot.setter
@@ -294,12 +296,7 @@ class Element(Visibility):
         :param remove: semicolon-separated list of styles to remove from the element
         :param replace: semicolon-separated list of styles to use instead of existing ones
         """
-        if replace is not None:
-            cls._default_style.clear()
-        for key in Style.parse(remove):
-            cls._default_style.pop(key, None)
-        cls._default_style.update(Style.parse(add))
-        cls._default_style.update(Style.parse(replace))
+        cls._default_style = Style.update_dict(cls._default_style, add, remove, replace)
         return cls
 
     @property
@@ -401,7 +398,8 @@ class Element(Visibility):
                 request=storage.request_contextvar.get(),
             )
             self._event_listeners[listener.id] = listener
-            self.update()
+            if not self._props._suspend_count:  # pylint: disable=protected-access
+                self.update()
         return self
 
     def _handle_event(self, msg: dict) -> None:
@@ -430,7 +428,10 @@ class Element(Visibility):
         return True
 
     def update(self) -> None:
-        """Update the element on the client side."""
+        """Update the element on the client side.
+
+        Subclasses can override this to rebuild derived state before calling ``super().update()``.
+        """
         if not self._is_safe_to_interact():
             return
         self.client.outbox.enqueue_update(self)
@@ -506,22 +507,24 @@ class Element(Visibility):
         """
         parent_slot = self.parent_slot
         assert parent_slot is not None
-        parent_slot.children.remove(self)
-        parent_slot.parent.update()
         target_container = target_container or parent_slot.parent
+        if self in target_container.ancestors(include_self=True):
+            raise ValueError('Cannot move an element into itself or one of its descendants.')
 
         if target_slot is None:
-            parent_slot = target_container.default_slot
-            self.parent_slot = parent_slot
+            new_slot = target_container.default_slot
         elif target_slot in target_container.slots:
-            parent_slot = target_container.slots[target_slot]
-            self.parent_slot = parent_slot
+            new_slot = target_container.slots[target_slot]
         else:
             raise ValueError(f'Slot "{target_slot}" does not exist in the target container. '
                              f'Add it first using `add_slot("{target_slot}")`.')
 
-        target_index = target_index if target_index >= 0 else len(parent_slot.children)
-        parent_slot.children.insert(target_index, self)
+        parent_slot.children.remove(self)
+        parent_slot.parent.update()
+        self.parent_slot = new_slot
+
+        target_index = target_index if target_index >= 0 else len(new_slot.children)
+        new_slot.children.insert(target_index, self)
 
         target_container.update()
         return self

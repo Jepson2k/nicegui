@@ -1,8 +1,11 @@
 import asyncio
+import contextlib
 import inspect
 import os
 import platform
+import secrets
 import signal
+import threading
 import time
 import urllib
 from collections.abc import Callable, Iterator
@@ -25,6 +28,8 @@ from ..staticfiles import CacheControlledStaticFiles
 from ..storage import PersistentDict, Storage
 from .app_config import AppConfig
 from .range_response import get_range_response
+
+USER_STORAGE_PRUNE_INTERVAL = 10.0
 
 
 class State(Enum):
@@ -87,7 +92,7 @@ class App(FastAPI):
         self.timer(10, Slot.prune_stacks)
         self.timer(10, prune_tab_storage)
         if self.storage.secret is not None:
-            self.timer(10, prune_user_storage)
+            self.timer(USER_STORAGE_PRUNE_INTERVAL, prune_user_storage)
         self._state = State.STARTED
 
     async def stop(self) -> None:
@@ -173,12 +178,19 @@ class App(FastAPI):
 
     def handle_exception(self, exception: Exception) -> None:
         """Handle an exception by invoking all registered exception handlers."""
-        if context.slot_stack and context.client is not None:
-            context.client.handle_exception(exception)
+        if Slot.get_stack():  # don't enter script mode by accessing `context.slot_stack`
+            with contextlib.suppress(RuntimeError):  # the slot's parent element or its client may have been deleted
+                context.client.handle_exception(exception)
+
         for handler in self._exception_handlers:
-            result = handler() if not inspect.signature(handler).parameters else handler(exception)
+            name = getattr(handler, '__name__', handler)
+            try:
+                result = handler() if not inspect.signature(handler).parameters else handler(exception)
+            except Exception:  # one failing handler must not prevent the others from running
+                log.exception(f'Exception handler {name} raised an exception')
+                continue
             if helpers.should_await(result):
-                background_tasks.create(result, name=f'exception {handler.__name__}')
+                background_tasks.create(result, name=f'exception {name}')
 
     def on_page_exception(self, handler: Callable) -> None:
         """Called when an exception occurs in a page and allows to create a custom error page.
@@ -253,8 +265,9 @@ class App(FastAPI):
         :param local_file: local file to serve as static content
         :param url_path: string that starts with a slash "/" and identifies the path at which the file should be served (default: None -> auto-generated URL path)
         :param single_use: whether to remove the route after the file has been downloaded once (default: False)
+            (only an auto-generated ``url_path`` is unguessable, an explicit one is the caller's responsibility)
         :param strict: whether to raise a ``FileNotFoundError`` if the file does not exist (default: True, *added in version 2.12.0*)
-        :param max_cache_age: value for max-age set in Cache-Control header (*added in version 2.8.0*)
+        :param max_cache_age: value for max-age set in Cache-Control header (*added in version 2.8.0*, ignored in favor of ``no-store`` if ``single_use`` is True)
         :return: encoded URL which can be used to access the file
         """
         if max_cache_age < 0:
@@ -263,13 +276,16 @@ class App(FastAPI):
         file = Path(local_file).resolve()
         if strict and not file.is_file():
             raise FileNotFoundError(f'File not found: {file}')
-        path = f'/_nicegui/auto/static/{helpers.hash_file_path(file)}/{file.name}' if url_path is None else url_path
+        token = secrets.token_urlsafe(32) if single_use else helpers.hash_file_path(file)
+        path = f'/_nicegui/auto/static/{token}/{file.name}' if url_path is None else url_path
+        consume = self._single_use_guard(path) if single_use else None
+        cache_control = 'no-store' if single_use else f'public, max-age={max_cache_age}'
 
-        @self.get(path)
+        @self.get(path, include_in_schema=not single_use)  # never list a single-use URL in the OpenAPI schema
         def read_item() -> FileResponse:
-            if single_use:
-                self.remove_route(path)
-            return FileResponse(file, headers={'Cache-Control': f'public, max-age={max_cache_age}'})
+            if consume is not None:
+                consume()
+            return FileResponse(file, headers={'Cache-Control': cache_control})
 
         return urllib.parse.quote(path)
 
@@ -311,19 +327,25 @@ class App(FastAPI):
         :param local_file: local file to serve as media content
         :param url_path: string that starts with a slash "/" and identifies the path at which the file should be served (default: None -> auto-generated URL path)
         :param single_use: whether to remove the route after the media file has been downloaded once (default: False)
+            (only an auto-generated ``url_path`` is unguessable, an explicit one is the caller's responsibility)
         :param strict: whether to raise a ``FileNotFoundError`` if the file does not exist (default: True, *added in version 2.12.0*)
         :return: encoded URL which can be used to access the file
         """
         file = Path(local_file).resolve()
         if strict and not file.is_file():
             raise FileNotFoundError(f'File not found: {file}')
-        path = f'/_nicegui/auto/media/{helpers.hash_file_path(file)}/{file.name}' if url_path is None else url_path
+        token = secrets.token_urlsafe(32) if single_use else helpers.hash_file_path(file)
+        path = f'/_nicegui/auto/media/{token}/{file.name}' if url_path is None else url_path
+        consume = self._single_use_guard(path) if single_use else None
 
-        @self.get(path)
+        @self.get(path, include_in_schema=not single_use)  # never list a single-use URL in the OpenAPI schema
         def read_item(request: Request, nicegui_chunk_size: int = 8192) -> Response:
-            if single_use:
-                self.remove_route(path)
-            return get_range_response(file, request, chunk_size=nicegui_chunk_size)
+            if consume is not None:
+                consume()
+            response = get_range_response(file, request, chunk_size=nicegui_chunk_size)
+            if consume is not None:
+                response.headers['Cache-Control'] = 'no-store'
+            return response
 
         return urllib.parse.quote(path)
 
@@ -374,6 +396,17 @@ class App(FastAPI):
         """Remove routes with the given path."""
         self.routes[:] = [r for r in self.routes if getattr(r, 'path', None) != path]
 
+    def _single_use_guard(self, path: str) -> Callable[[], None]:
+        """Return a callable that lets exactly one request pass and removes the route behind it."""
+        ticket = threading.Lock()
+
+        def consume() -> None:
+            if not ticket.acquire(blocking=False):  # pylint: disable=consider-using-with
+                raise HTTPException(status_code=404, detail='Not Found')
+            self.remove_route(path)
+
+        return consume
+
     def reset(self) -> None:
         """Reset app to its initial state. (Useful for testing.)"""
         self.storage.clear()
@@ -418,13 +451,14 @@ async def prune_tab_storage(*, force: bool = False) -> None:
 async def prune_user_storage(*, force: bool = False) -> None:
     """Remove user storage objects without a client session."""
     client_session_ids = {client.request.session['id'] for client in Client.instances.values()}
+    active_request_sessions = core.app.storage._active_request_sessions  # pylint: disable=protected-access
     storages_to_close: list[PersistentDict] = []
     now = time.time()
     user_storages = core.app.storage._users  # pylint: disable=protected-access
     for session_id in list(user_storages):
-        if session_id not in client_session_ids:
+        if session_id not in client_session_ids and session_id not in active_request_sessions:  # avoid pruning mid-request
             age = now - user_storages[session_id].last_modified
-            if force or age > 10.0:  # do not remove storages created by middleware and still wait for client
+            if force or age > USER_STORAGE_PRUNE_INTERVAL:  # do not remove storages created by middleware and still wait for client
                 storages_to_close.append(user_storages.pop(session_id))
     results = await asyncio.gather(*[storage.close() for storage in storages_to_close], return_exceptions=True)
     for result in results:

@@ -1,6 +1,5 @@
 import builtins
 import importlib
-import importlib.util
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -81,6 +80,7 @@ _LAZY_IMPORTS = {
     'pagination': ('.elements.pagination', 'Pagination'),
     'parallax': ('.elements.parallax', 'Parallax'),
     'plotly': ('.elements.plotly', 'Plotly'),
+    'popup': ('.elements.popup', 'Popup'),
     'circular_progress': ('.elements.progress', 'CircularProgress'),
     'linear_progress': ('.elements.progress', 'LinearProgress'),
     'matplotlib': ('.elements.pyplot', 'Matplotlib'),
@@ -240,6 +240,7 @@ __all__ = [
     'pagination',
     'parallax',
     'plotly',
+    'popup',
     'pyplot',
     'query',
     'radio',
@@ -369,6 +370,7 @@ if TYPE_CHECKING:
     from .elements.pagination import Pagination as pagination
     from .elements.parallax import Parallax as parallax
     from .elements.plotly import Plotly as plotly
+    from .elements.popup import Popup as popup
     from .elements.progress import CircularProgress as circular_progress
     from .elements.progress import LinearProgress as linear_progress
     from .elements.pyplot import Matplotlib as matplotlib
@@ -447,8 +449,6 @@ def __getattr__(name: str) -> object:
 
 
 # Eagerly import element packages with 'dist' dirs so their __init__.py registers ESM modules in the importmap.
-for _module_path in {mp for mp, _ in _LAZY_IMPORTS.values()}:
-    _spec = importlib.util.find_spec(_module_path, package='nicegui')
-    if _spec and _spec.submodule_search_locations and (Path(_spec.submodule_search_locations[0]) / 'dist').is_dir():
-        importlib.import_module(_module_path, package='nicegui')
-del _module_path, _spec  # pylint: disable=undefined-loop-variable
+# We scan the file system rather than `_LAZY_IMPORTS`, because some packages (e.g. sortable) have no `ui` name.
+for _dist in sorted(Path(__file__).parent.glob('elements/*/dist')):
+    importlib.import_module(f'.elements.{_dist.parent.name}', package='nicegui')
