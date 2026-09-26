@@ -463,6 +463,37 @@ def pointer_events() -> None:
             .on_click(report).on_context_menu(report)
 
 
+@doc.demo('Drive a dial from Python', '''
+    With `capture_pointer`, a drag that starts on an object keeps sending `pointermove` and `pointerup` events to it,
+    even after the pointer has left the object or the canvas.
+    The orbit controls pause for the duration of the drag.
+    The reported position is where the pointer ray meets the object's local XY plane,
+    so `atan2(y, x)` is the angle of the pointer around a dial lying in that plane.
+    The coordinates are `None` when the ray misses the plane.
+
+    *Added in version X.Y.Z*
+''')
+def pointer_capture() -> None:
+    import math
+
+    from nicegui import events
+
+    def turn(e: events.ScenePointerEventArguments) -> None:
+        if e.x is None or e.y is None:
+            return
+        angle = math.atan2(e.y, e.x)
+        needle.rotate(0, 0, angle)
+        label.set_text(f'{math.degrees(angle):.0f}°')
+
+    with ui.scene(width=285, height=220) as scene:
+        with scene.group() as dial:
+            scene.cylinder(1, 1, 0.2, 32).material('SteelBlue').rotate(math.pi / 2, 0, 0)
+        dial.capture_pointer().on_pointer_down(turn).on_pointer_move(turn)
+        with scene.group() as needle:
+            scene.box(0.8, 0.1, 0.1).material('Coral').move(x=0.5, z=0.15)
+    label = ui.label()
+
+
 @doc.demo('Hover effect catalog', '''
     `hover_effect` adds a client-side visual cue when the cursor is over the object.
     Three named effects are available without any post-processing setup:

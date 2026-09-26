@@ -69,6 +69,8 @@ export default {
     this.effectArtifacts = new Map();
     this.hoveredObjectId = null;
     this._lastPointerMoveEmit = 0;
+    this.pointerCaptureIds = new Set(); // objects that keep receiving pointer events for the whole drag started on them
+    this.pointerCapture = null;         // { id, pointerId } while such a drag is in progress
 
     if (this.showStats) {
       this.stats = new Stats();
@@ -328,12 +330,16 @@ export default {
       return null;
     };
 
-    const raycastInteractive = (clientX, clientY) => {
-      if (this.interactiveObjects.length === 0) return [];
+    const setRaycasterFromClient = (clientX, clientY) => {
       const rect = this.renderer.domElement.getBoundingClientRect();
       const x = ((clientX - rect.left) / rect.width) * 2 - 1;
       const y = -((clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera({ x, y }, this.camera);
+    };
+
+    const raycastInteractive = (clientX, clientY) => {
+      if (this.interactiveObjects.length === 0) return [];
+      setRaycasterFromClient(clientX, clientY);
       return raycaster.intersectObjects(this.interactiveObjects, true);
     };
 
@@ -351,21 +357,22 @@ export default {
       return { id: null, point: null, localPoint: null };
     };
 
-    const buildPayload = (type, id, point, localPoint, mouseEvent) => ({
+    const buildPayload = (type, id, point, localPoint, mouseEvent, missing = 0) => ({
       type,
       object_id: id,
       object_name: this.objects.get(id)?.mesh?.name ?? "",
+      pointer_type: mouseEvent?.pointerType ?? "",
       button: mouseEvent?.button ?? 0,
       alt_key: !!mouseEvent?.altKey,
       ctrl_key: !!mouseEvent?.ctrlKey,
       meta_key: !!mouseEvent?.metaKey,
       shift_key: !!mouseEvent?.shiftKey,
-      x: localPoint?.x ?? 0,
-      y: localPoint?.y ?? 0,
-      z: localPoint?.z ?? 0,
-      wx: point?.x ?? 0,
-      wy: point?.y ?? 0,
-      wz: point?.z ?? 0,
+      x: localPoint?.x ?? missing,
+      y: localPoint?.y ?? missing,
+      z: localPoint?.z ?? missing,
+      wx: point?.x ?? missing,
+      wy: point?.y ?? missing,
+      wz: point?.z ?? missing,
     });
 
     const emitPointerEvent = (type, id, point, localPoint, mouseEvent) => {
@@ -373,9 +380,69 @@ export default {
       this.$emit("pointerevent", buildPayload(type, id, point, localPoint, mouseEvent));
     };
 
+    // TransformControls raycast their own handles, so a pointer over a gizmo counts as hovering its target.
+    const hoveredTransformTarget = () => {
+      for (const [id, tc] of this.transform_controls) {
+        if ((tc.axis || tc.dragging) && this.is_interactive(id)) return id;
+      }
+      return null;
+    };
+
+    // A captured pointer can be anywhere on the screen, so its position is reported where the pointer ray
+    // meets the object's local XY plane; the coordinates are null when the ray misses that plane.
+    const capturePlane = new THREE.Plane();
+    const captureNormal = new THREE.Vector3();
+    const captureOrigin = new THREE.Vector3();
+    const captureHit = new THREE.Vector3();
+    const emitCapturedPointerEvent = (type, e) => {
+      const id = this.pointerCapture.id;
+      const root = this.objects.get(id)?.mesh;
+      if (!root || !this.objectHandlers.get(id)?.has(type)) return;
+      root.updateMatrixWorld();
+      captureOrigin.setFromMatrixPosition(root.matrixWorld);
+      captureNormal.set(0, 0, 1).transformDirection(root.matrixWorld);
+      capturePlane.setFromNormalAndCoplanarPoint(captureNormal, captureOrigin);
+      setRaycasterFromClient(e.clientX, e.clientY);
+      const point = raycaster.ray.intersectPlane(capturePlane, captureHit);
+      const localPoint = point && root.worldToLocal(point.clone()).setZ(0);
+      this.$emit("pointerevent", buildPayload(type, id, point, localPoint, e, null));
+    };
+    const onCapturedPointerMove = (e) => {
+      if (e.pointerId !== this.pointerCapture.pointerId) return;
+      const now = performance.now();
+      if (now - this._lastPointerMoveEmit <= 16) return;
+      this._lastPointerMoveEmit = now;
+      emitCapturedPointerEvent("pointermove", e);
+    };
+    const onCapturedPointerEnd = (e) => {
+      if (e.pointerId !== this.pointerCapture.pointerId) return;
+      emitCapturedPointerEvent("pointerup", e); // a pointercancel ends the drag like a release does
+      this._endPointerCapture();
+    };
+    // Window listeners instead of setPointerCapture: they also see releases outside the canvas and synthesized events.
+    this._startPointerCapture = (id, e) => {
+      this.pointerCapture = { id, pointerId: e.pointerId };
+      this.dragging_count++;
+      if (this.dragging_count === 1) this.controls.enabled = false;
+      window.addEventListener("pointermove", onCapturedPointerMove);
+      window.addEventListener("pointerup", onCapturedPointerEnd);
+      window.addEventListener("pointercancel", onCapturedPointerEnd);
+    };
+    this._endPointerCapture = () => {
+      if (!this.pointerCapture) return;
+      this.pointerCapture = null;
+      window.removeEventListener("pointermove", onCapturedPointerMove);
+      window.removeEventListener("pointerup", onCapturedPointerEnd);
+      window.removeEventListener("pointercancel", onCapturedPointerEnd);
+      this.dragging_count = Math.max(0, this.dragging_count - 1);
+      if (this.dragging_count === 0) this.controls.enabled = this.userOrbitEnabled;
+    };
+
     this.renderer.domElement.addEventListener("pointermove", (e) => {
+      if (this.pointerCapture) return; // the captured object gets its moves from the window listener
       if (this.interactiveObjects.length === 0 && !this.hoveredObjectId) return;
-      const { id: newHoveredId, point, localPoint } = findHit(e.clientX, e.clientY);
+      const { id: hitId, point, localPoint } = findHit(e.clientX, e.clientY);
+      const newHoveredId = hitId ?? hoveredTransformTarget();
 
       if (newHoveredId !== this.hoveredObjectId) {
         if (this.hoveredObjectId) {
@@ -407,8 +474,12 @@ export default {
     });
 
     const handlePerObjectMouseEvent = (eventType) => (e) => {
+      if (this.pointerCapture && (eventType === "pointerdown" || eventType === "pointerup")) return;
       const { id, point, localPoint } = findHit(e.clientX, e.clientY);
-      if (id) {
+      if (id && eventType === "pointerdown" && this.pointerCaptureIds.has(id)) {
+        this._startPointerCapture(id, e);
+        emitCapturedPointerEvent(eventType, e);
+      } else if (id) {
         emitPointerEvent(eventType, id, point, localPoint, e);
       } else if (eventType === "click" || eventType === "dblclick" ||
                  eventType === "contextmenu" || eventType === "pointerdown") {
@@ -466,6 +537,7 @@ export default {
   beforeUnmount() {
     window.removeEventListener("resize", this.resize);
     window.removeEventListener("DOMContentLoaded", this.resize);
+    this._endPointerCapture?.();
   },
 
   methods: {
@@ -625,6 +697,16 @@ export default {
         }
       }
     },
+    async set_pointer_capture(object_id, value) {
+      const object = await get_object(this.objects, object_id);
+      if (!object) return;
+      if (value) {
+        this.pointerCaptureIds.add(object_id);
+      } else {
+        this.pointerCaptureIds.delete(object_id);
+        if (this.pointerCapture?.id === object_id) this._endPointerCapture();
+      }
+    },
     has_handler(object_id, type) {
       return this.objectHandlers.get(object_id)?.has(type) ?? false;
     },
@@ -652,8 +734,9 @@ export default {
         this._applyTransformAxes(existing, mode, visible_axes);
         return true;
       }
+      const object = record.mesh;
       const tc = new TransformControls(this.camera, this.renderer.domElement);
-      tc.attach(record.mesh);
+      tc.attach(object);
       tc.setMode(mode);
       if (size !== undefined && size !== null) tc.setSize(size);
       if (space !== undefined && space !== null) tc.setSpace(space);
@@ -677,6 +760,7 @@ export default {
         this.$emit(type, {
           type,
           mode: tc.mode,
+          axis: tc.axis,
           object_id,
           object_name: object.name,
           x: object.position.x,
@@ -771,6 +855,8 @@ export default {
         this.renderer.domElement.style.cursor = "";
         this.hoveredObjectId = null;
       }
+      this.pointerCaptureIds.delete(object_id);
+      if (this.pointerCapture?.id === object_id) this._endPointerCapture();
       this.objectHandlers.delete(object_id);
       this.objectEffects.delete(object_id);
       const interactiveIndex = this.interactiveObjects.indexOf(object.mesh);
