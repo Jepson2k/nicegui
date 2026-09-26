@@ -182,6 +182,7 @@ export default {
     },
     tooltipClass() {
       this.rebuildCompletions();
+    },
     decorations() {
       this._decorationsPending = true; // applied from setEditorValueFromProps
     },
