@@ -157,6 +157,7 @@ class SceneDragEventArguments(ClickEventArguments):
 class SceneTransformEventArguments(UiEventArguments):
     type: Literal['transform', 'transform_start', 'transform_end']
     mode: Literal['translate', 'rotate', 'scale']
+    axis: str | None
     object_id: str
     object_name: str
     x: float
@@ -176,17 +177,18 @@ class ScenePointerEventArguments(UiEventArguments):
                   'pointermove', 'click', 'dblclick', 'contextmenu']
     object_id: str
     object_name: str
+    pointer_type: str
     button: int
     alt: bool
     ctrl: bool
     meta: bool
     shift: bool
-    x: float
-    y: float
-    z: float
-    wx: float
-    wy: float
-    wz: float
+    x: float | None
+    y: float | None
+    z: float | None
+    wx: float | None
+    wy: float | None
+    wz: float | None
 
 
 @dataclass(kw_only=True, slots=True)

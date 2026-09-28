@@ -76,6 +76,7 @@ class Object3D:
         self.material_is_set: bool = False
         self.visible_: bool = True
         self.draggable_: bool = False
+        self.capture_pointer_: bool = False
         self.x: float = 0
         self.y: float = 0
         self.z: float = 0
@@ -191,6 +192,9 @@ class Object3D:
     def _draggable(self) -> None:
         self.scene.run_method('draggable', self.id, self.draggable_)
 
+    def _capture_pointer(self) -> None:
+        self.scene.run_method('set_pointer_capture', self.id, self.capture_pointer_)
+
     def _sync_handler_types(self) -> None:
         """Push the current set of registered handler types to the JS side."""
         active = [event_type for event_type, handlers in self._pointer_handlers.items() if handlers]
@@ -231,6 +235,8 @@ class Object3D:
             self._visible()
         if self.draggable_:
             self._draggable()
+        if self.capture_pointer_:
+            self._capture_pointer()
         if any(self._pointer_handlers.values()):
             self._sync_handler_types()
         if self._effect_spec is not None:
@@ -488,6 +494,25 @@ class Object3D:
             return self
         self._effect_spec = new_spec
         self._sync_effect()
+        return self
+
+    def capture_pointer(self, value: bool = True) -> Self:
+        """Keep delivering pointer events to this object for the whole drag that started on it.
+
+        After a ``pointerdown`` on the object, ``pointermove`` and ``pointerup`` keep targeting it until the pointer
+        is released, even when it has left the object or the canvas, and the orbit controls pause meanwhile.
+        The reported position is where the pointer ray meets the object's local XY plane (so ``z`` is 0),
+        or ``None`` when the ray misses that plane.
+        This makes it easy to drive dials, sliders and similar controls from Python.
+        The object still needs at least one pointer handler to be hit-tested.
+
+        :param value: whether to capture the pointer (default: ``True``)
+
+        *added in version X.Y.Z*
+        """
+        if self.capture_pointer_ != value:
+            self.capture_pointer_ = value
+            self._capture_pointer()
         return self
 
     def enable_transform_controls(self,

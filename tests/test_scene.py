@@ -1152,3 +1152,145 @@ def test_axes_inset_handle_click_snaps_camera(screen: Screen):
     screen.wait_for(lambda: not screen.selenium.execute_script(
         f'return getElement({scene.id}).viewHelper.animating'
     ))
+
+
+def test_pointer_capture_keeps_the_drag_on_the_object(screen: Screen):
+    """A drag that starts on a captured object keeps reporting to it after the pointer has left it and the canvas."""
+    events: list[tuple[str, str, float | None, float | None, float | None]] = []
+    hover_events: list[str] = []
+    scene = None
+    box = None
+
+    @ui.page('/')
+    def page():
+        nonlocal scene, box
+
+        def record(e: ScenePointerEventArguments) -> None:
+            events.append((e.type, e.pointer_type, e.x, e.y, e.z))
+        with ui.scene() as scene:
+            box = scene.box().capture_pointer() \
+                .on_pointer_down(record).on_pointer_move(record).on_pointer_up(record) \
+                .on_pointer_over(lambda: hover_events.append('over')) \
+                .on_pointer_out(lambda: hover_events.append('out'))
+
+    screen.open('/')
+    screen.wait_for(lambda: screen.selenium.execute_script(
+        f'return getElement({scene.id}).has_handler("{box.id}", "pointerup")'
+    ))
+
+    def dispatch(event_type: str, target: str, dx: int) -> None:
+        # the camera looks at the box, so the canvas center hits it; `dx` moves the pointer along that row
+        screen.selenium.execute_script(f'''
+            const el = getElement({scene.id});
+            const rect = el.renderer.domElement.getBoundingClientRect();
+            {target}.dispatchEvent(new PointerEvent("{event_type}", {{
+                bubbles: true, pointerId: 1, pointerType: "mouse", button: 0,
+                clientX: rect.left + rect.width / 2 + {dx}, clientY: rect.top + rect.height / 2,
+            }}));
+        ''')
+
+    def orbit_enabled() -> bool:
+        return screen.selenium.execute_script(f'return getElement({scene.id}).controls.enabled')
+
+    dispatch('pointermove', 'el.renderer.domElement', 0)
+    screen.wait_for(lambda: hover_events == ['over'])
+    events.clear()
+    dispatch('pointerdown', 'el.renderer.domElement', 0)
+    screen.wait_for(lambda: any(type_ == 'pointerdown' for type_, *_ in events))
+    assert orbit_enabled() is False
+
+    dispatch('pointermove', 'window', -300)  # well outside the box and the 400px canvas
+    screen.wait_for(lambda: any(type_ == 'pointermove' for type_, *_ in events))
+    dispatch('pointerup', 'window', -300)
+    screen.wait_for(lambda: any(type_ == 'pointerup' for type_, *_ in events))
+    screen.wait_for(orbit_enabled)
+    screen.wait_for(lambda: hover_events == ['over', 'out'])
+
+    assert [type_ for type_, *_ in events] == ['pointerdown', 'pointermove', 'pointerup']
+    assert events[0][1:] == ('mouse', pytest.approx(0, abs=1e-6), pytest.approx(0, abs=1e-6), 0)
+    for _, pointer_type, x, y, z in events[1:]:
+        assert pointer_type == 'mouse'
+        assert x < -0.5, 'the pointer ray meets the box plane left of the box'
+        assert y == pytest.approx(0, abs=1e-6)
+        assert z == 0
+
+
+def test_transform_controls_handle_keeps_target_hovered(screen: Screen):
+    """Hovering a TransformControls handle does not count as leaving the object it belongs to."""
+    events: list[str] = []
+    scene = None
+    box = None
+
+    @ui.page('/')
+    def page():
+        nonlocal scene, box
+        with ui.scene() as scene:
+            box = scene.box() \
+                .on_pointer_over(lambda e: events.append(e.type)) \
+                .on_pointer_out(lambda e: events.append(e.type))
+            box.enable_transform_controls(mode='translate')
+
+    screen.open('/')
+    screen.wait_for(lambda: screen.selenium.execute_script(
+        f'const el = getElement({scene.id});'
+        f'return el.has_transform_controls("{box.id}") && el.has_handler("{box.id}", "pointerout")'
+    ))
+
+    def move_pointer(dx: int, *, axis: str | None) -> None:
+        # `axis` is what the gizmo's own hover raycast reports; a synthesized move without pointer type leaves it alone
+        screen.selenium.execute_script(f'''
+            const el = getElement({scene.id});
+            el.transform_controls.get("{box.id}").axis = {'null' if axis is None else f'"{axis}"'};
+            const rect = el.renderer.domElement.getBoundingClientRect();
+            el.renderer.domElement.dispatchEvent(new PointerEvent("pointermove", {{
+                bubbles: true, pointerId: 1,
+                clientX: rect.left + rect.width / 2 + {dx}, clientY: rect.top + rect.height / 2,
+            }}));
+        ''')
+
+    def cursor() -> str:
+        return screen.selenium.execute_script(f'return getElement({scene.id}).renderer.domElement.style.cursor')
+
+    move_pointer(0, axis=None)
+    screen.wait_for(lambda: events == ['pointerover'])
+    move_pointer(-150, axis='X')
+    assert cursor() == 'pointer'
+    move_pointer(-150, axis=None)
+    screen.wait_for(lambda: events == ['pointerover', 'pointerout'])
+    assert cursor() == ''
+
+
+def test_deleting_objects_releases_renderer_geometry(screen: Screen):
+    """Repeatedly showing and deleting a handle must not grow GPU allocations."""
+    scene = None
+    handles = []
+
+    @ui.page('/')
+    def page():
+        nonlocal scene
+        with ui.scene() as scene:
+            scene.box().move(2, 0, 0)
+
+        def show():
+            with scene, scene.group() as handle:
+                scene.box(1, 1, 0.1)
+                scene.sphere(0.1)
+            handles.append(handle)
+
+        ui.button('Show handle', on_click=show)
+        ui.button('Hide handle', on_click=lambda: handles.pop().delete())
+
+    screen.open('/')
+
+    def geometries():
+        return screen.selenium.execute_script(
+            f'return getElement({scene.id}).renderer.info.memory.geometries'
+        )
+
+    screen.wait_for(lambda: geometries() > 0)
+    baseline = geometries()
+    for _ in range(3):
+        screen.click('Show handle')
+        screen.wait_for(lambda: geometries() == baseline + 2)
+        screen.click('Hide handle')
+        screen.wait_for(lambda: geometries() == baseline)
