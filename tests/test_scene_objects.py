@@ -216,3 +216,29 @@ def test_point_cloud_set_points(screen: Screen):
     point_cloud.set_points([[0, 0, 0], [1, 1, 1], [2, 2, 2], [3, 3, 3]], [[1, 0, 0]] * 4)
     wait_until(screen, scene, 'point_cloud', 'o.geometry.attributes.position.count', 4)
     wait_until(screen, scene, 'point_cloud', 'o.geometry.attributes.color.count', 4)
+
+
+def test_text_set_text_and_style(screen: Screen):
+    scene: ui.scene = None  # type: ignore
+    text: ui.scene.text = None  # type: ignore
+    text3d: ui.scene.text3d = None  # type: ignore
+
+    @ui.page('/')
+    def page():
+        nonlocal scene, text, text3d
+        with ui.scene() as scene:
+            text = scene.text('2D', 'color: red').with_name('text')
+            text3d = scene.text3d('3D', 'color: red').with_name('text3d')
+
+    screen.open('/')
+    wait_until(screen, scene, 'text', 'o.element.textContent', '2D')
+    wait_until(screen, scene, 'text3d', 'o.element.textContent', '3D')
+
+    text.set_text('changed').set_style('color: blue')
+    wait_until(screen, scene, 'text', 'o.element.textContent', 'changed')
+    wait_until(screen, scene, 'text', 'o.element.style.color', 'blue')
+
+    text3d.set_text('changed').set_style('color: blue')
+    wait_until(screen, scene, 'text3d', 'o.element.textContent', 'changed')
+    wait_until(screen, scene, 'text3d', 'o.element.style.color', 'blue')
+    wait_until(screen, scene, 'text3d', 'o.element.style.userSelect', 'none')  # the 3D label keeps its built-in style
