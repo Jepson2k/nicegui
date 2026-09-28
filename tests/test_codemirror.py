@@ -195,6 +195,8 @@ def test_selection_reemits_after_focus_change(screen: Screen):
         )
 
     screen.open('/')
+    # Restore the active browser tab after tests that open additional windows.
+    screen.selenium.execute_cdp_cmd('Page.bringToFront', {})
     screen.should_contain('Line 2')
     screen.selenium.execute_script(
         f'const el = getElement({editor.id});'
@@ -224,6 +226,8 @@ def test_focus_change_event(screen: Screen):
         editor = ui.codemirror('Hello', on_focus_change=lambda e: events.append(e.focused))
 
     screen.open('/')
+    # Restore the active browser tab after tests that open additional windows.
+    screen.selenium.execute_cdp_cmd('Page.bringToFront', {})
     screen.should_contain('Hello')
     # Focus then blur the editor via JS to avoid Selenium focus-stealing flakiness.
     screen.selenium.execute_script(
