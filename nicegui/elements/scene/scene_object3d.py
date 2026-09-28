@@ -522,6 +522,7 @@ class Object3D:
                                   visible_axes: list[Literal['X', 'Y', 'Z']] | None = None,
                                   space: Literal['local', 'world'] | None = None,
                                   rotation_snap: float | None = None,
+                                  translation_snap: float | None = None,
                                   ) -> Self:
         """Attach a TransformControls gizmo so the user can drag this object in 3D.
 
@@ -533,10 +534,12 @@ class Object3D:
         :param visible_axes: list of axes to show (e.g. ``['X']`` for X-only); shows all axes if ``None``
         :param space: ``'local'`` or ``'world'`` (defaults to three.js' ``'world'``)
         :param rotation_snap: optional snap angle in radians (e.g. ``math.radians(5)``)
+        :param translation_snap: optional snap distance in scene units (e.g. ``0.25``)
 
         *added in version X.Y.Z*
         """
-        self.scene.run_method('enable_transform_controls', self.id, mode, size, visible_axes, space, rotation_snap)
+        self.scene.run_method('enable_transform_controls',
+                              self.id, mode, size, visible_axes, space, rotation_snap, translation_snap)
         return self
 
     def disable_transform_controls(self) -> Self:
@@ -602,6 +605,14 @@ class Object3D:
         """
         self.clipping_planes_ = []
         self._clipping_planes()
+        return self
+
+    def set_transform_translation_snap(self, units: float) -> Self:
+        """Change this object's TransformControls translation snap distance in scene units.
+
+        *added in version X.Y.Z*
+        """
+        self.scene.run_method('set_transform_translation_snap', self.id, units)
         return self
 
     def attach(self, parent: Object3D) -> None:

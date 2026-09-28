@@ -869,7 +869,7 @@ export default {
       // Otherwise the dragging-changed handler will restore the latch when the drag ends.
       if (this.dragging_count === 0) this.controls.enabled = this.userOrbitEnabled;
     },
-    async enable_transform_controls(object_id, mode, size, visible_axes, space, rotation_snap) {
+    async enable_transform_controls(object_id, mode, size, visible_axes, space, rotation_snap, translation_snap) {
       const record = await get_object(this.objects, object_id);
       if (!record) return false;
       const existing = this.transform_controls.get(object_id);
@@ -878,6 +878,7 @@ export default {
         if (size !== undefined && size !== null) existing.setSize(size);
         if (space !== undefined && space !== null) existing.setSpace(space);
         if (rotation_snap !== undefined && rotation_snap !== null) existing.setRotationSnap(rotation_snap);
+        if (translation_snap !== undefined && translation_snap !== null) existing.setTranslationSnap(translation_snap);
         this._applyTransformAxes(existing, mode, visible_axes);
         return true;
       }
@@ -888,6 +889,7 @@ export default {
       if (size !== undefined && size !== null) tc.setSize(size);
       if (space !== undefined && space !== null) tc.setSpace(space);
       if (rotation_snap !== undefined && rotation_snap !== null) tc.setRotationSnap(rotation_snap);
+      if (translation_snap !== undefined && translation_snap !== null) tc.setTranslationSnap(translation_snap);
       this._applyTransformAxes(tc, mode, visible_axes);
       let isDragging = false;
       tc.addEventListener("dragging-changed", (event) => {
@@ -985,6 +987,10 @@ export default {
     set_transform_rotation_snap(object_id, radians) {
       const tc = this.transform_controls.get(object_id);
       if (tc) tc.setRotationSnap(radians);
+    },
+    set_transform_translation_snap(object_id, units) {
+      const tc = this.transform_controls.get(object_id);
+      if (tc) tc.setTranslationSnap(units);
     },
     has_transform_controls(object_id) {
       return this.transform_controls.has(object_id);

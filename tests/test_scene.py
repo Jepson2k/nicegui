@@ -387,6 +387,37 @@ def test_transform_controls_mode_change(screen: Screen):
     ))
 
 
+def test_transform_controls_translation_snap(screen: Screen):
+    scene = None
+    box = None
+
+    @ui.page('/')
+    def page():
+        nonlocal scene, box
+        with ui.scene() as scene:
+            box = scene.box()
+        ui.button('Enable', on_click=lambda: box.enable_transform_controls(translation_snap=0.25))
+        ui.button('Coarser', on_click=lambda: box.set_transform_translation_snap(0.5))
+        ui.button('Re-enable', on_click=lambda: box.enable_transform_controls(translation_snap=1.0))
+
+    screen.open('/')
+    screen.wait_for(lambda: screen.selenium.execute_script(
+        f'const el = getElement({scene.id}); return el && !!el.renderer'
+    ))
+
+    def translation_snap() -> float | None:
+        return screen.selenium.execute_script(
+            f'return getElement({scene.id}).transform_controls.get("{box.id}")?.translationSnap ?? null'
+        )
+
+    screen.click('Enable')
+    screen.wait_for(lambda: translation_snap() == 0.25)
+    screen.click('Coarser')
+    screen.wait_for(lambda: translation_snap() == 0.5)
+    screen.click('Re-enable')  # existing controls pick up the new snap as well
+    screen.wait_for(lambda: translation_snap() == 1.0)
+
+
 def test_set_orbit_enabled_survives_transform_drag(screen: Screen):
     """Locks in the regression for the orbit drag-counter race: a TransformControls drag-end must
     not silently re-enable OrbitControls if the user has explicitly disabled them."""
