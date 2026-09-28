@@ -185,13 +185,26 @@ def test_selection_reemits_after_focus_change(screen: Screen):
     """
     events: list[tuple[int, int]] = []
     editor = None
+    focused = False
+
+    def on_focus(e):
+        nonlocal focused
+        focused = e.focused
 
     @ui.page('/')
     def page():
         nonlocal editor
+        selection = ui.label('No focused selection')
+
+        def on_selection(e):
+            events.append((e.line, e.column))
+            if focused:
+                selection.set_text(f'Focused selection: {e.line}:{e.column}')
+
         editor = ui.codemirror(
             'Line 1\nLine 2\nLine 3',
-            on_selection_change=lambda e: events.append((e.line, e.column)),
+            on_selection_change=on_selection,
+            on_focus_change=on_focus,
         )
 
     screen.open('/')
@@ -206,6 +219,9 @@ def test_selection_reemits_after_focus_change(screen: Screen):
 
     # Blur, then refocus and select the identical position: without the
     # focus-transition cache clear the identical payload would be deduped away.
+    # Let the 30 ms selection throttle expire: a leading selection event must
+    # already see focus, not depend on a delayed trailing event arriving later.
+    screen.wait(0.1)
     screen.selenium.execute_script(
         f'const el = getElement({editor.id}); el.editor.contentDOM.blur();'
     )
@@ -214,6 +230,7 @@ def test_selection_reemits_after_focus_change(screen: Screen):
         'el.editor.dispatch({selection: {anchor: el.editor.state.doc.line(2).from}});'
     )
     screen.wait_for(lambda: events.count((2, 1)) >= 2)
+    screen.should_contain('Focused selection: 2:1')
 
 
 def test_focus_change_event(screen: Screen):

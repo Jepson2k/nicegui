@@ -544,6 +544,11 @@ export default {
             // ignore unfocused selection events (programmatic echoes) must still hear
             // about the first post-focus selection even if it matches the last payload.
             if (u.focusChanged) delete this._last["selection-change"];
+            // A click can focus and select in the same update. Hosts must know
+            // that focus before deciding whether to accept the selection.
+            if (self.focusTrackingEnabled && u.focusChanged) {
+              this._maybeEmit("focus-change", { focused: u.view.hasFocus });
+            }
             if (self.selectionTrackingEnabled && (u.selectionSet || u.docChanged)) {
               const payload = (state) => {
                 const sel = state.selection.main;
@@ -567,9 +572,6 @@ export default {
               if (u.selectionSet || JSON.stringify(now) !== JSON.stringify(payload(u.startState))) {
                 this._maybeEmit("selection-change", now);
               }
-            }
-            if (self.focusTrackingEnabled && u.focusChanged) {
-              this._maybeEmit("focus-change", { focused: u.view.hasFocus });
             }
             if (self.viewportTrackingEnabled && u.viewportChanged) {
               const vp = u.view.viewport;
