@@ -273,6 +273,7 @@ class Scene(CancelableWaitElement, component='scene.js', esm={'nicegui-scene': '
             'radius': radius,
         }
         self.run_method('set_axes_labels', self._axes_labels_opts)
+
     def on_transform(self, callback: Handler[SceneTransformEventArguments]) -> Self:
         """Add a callback fired continuously while a TransformControls gizmo is being dragged.
 
