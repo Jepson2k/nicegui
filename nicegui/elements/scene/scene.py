@@ -15,6 +15,8 @@ from ...events import (
     SceneClickEventArguments,
     SceneClickHit,
     SceneDragEventArguments,
+    SceneIntersectionPlane,
+    ScenePoint,
     handle_event,
 )
 from ..mixins.cancelable_wait_element import CancelableWaitElement
@@ -84,6 +86,8 @@ class Scene(CancelableWaitElement, component='scene.js', esm={'nicegui-scene': '
                  fps: int = DEFAULT_PROP | 20,
                  show_stats: bool = DEFAULT_PROP | False,
                  polar_grid: tuple[float, int, int] | tuple[float, int, int, int] | None = None,
+                 intersection_planes: list[SceneIntersectionPlane] | None = DEFAULT_PROP | None,
+                 raycaster_threshold: float = DEFAULT_PROP | 1.0,
                  ) -> None:
         """3D Scene
 
@@ -106,6 +110,16 @@ class Scene(CancelableWaitElement, component='scene.js', esm={'nicegui-scene': '
         :param fps: target frame rate for the scene in frames per second (default: 20, *added in version 3.2.0*)
         :param show_stats: whether to show performance stats (default: ``False``, *added in version 3.2.0*)
         :param polar_grid: optional tuple of ``(radius, sectors, rings)`` or ``(radius, sectors, rings, divisions)`` for a `Three.js' PolarGridHelper <https://threejs.org/docs/#api/en/helpers/PolarGridHelper>`_ floor; ``divisions`` controls the visual smoothness of each ring (default: ``64``); takes precedence over ``grid`` (default: ``None``)
+        :param intersection_planes: list of named planes to intersect each click ray with.
+            The intersection points are surfaced on click events as ``e.intersections[name]``,
+            so the host application can read where the ray hit each configured plane even when
+            the click lands on empty space. Default: no planes (``e.intersections`` is empty).
+            (*added in version TBD*)
+        :param raycaster_threshold: hit-test distance threshold (in scene units) for thin objects
+            like lines and point clouds. The default value (1.0) matches three.js, which is too
+            coarse for scenes with many thin objects (raycasts can return thousands of hits and
+            blow past the WebSocket payload limit); lower the threshold for dense scenes.
+            (*added in version TBD*)
         """
         super().__init__()
         self._props['width'] = width
@@ -115,6 +129,17 @@ class Scene(CancelableWaitElement, component='scene.js', esm={'nicegui-scene': '
         self._props['grid'] = grid
         self._props['polar-grid'] = polar_grid
         self._props['background-color'] = background_color
+        self._props['raycaster-threshold'] = raycaster_threshold
+        planes = list(intersection_planes or [])
+        seen: set[str] = set()
+        for plane in planes:
+            if plane.name in seen:
+                raise ValueError(f'Duplicate intersection_planes name: {plane.name!r}')
+            seen.add(plane.name)
+        self._props['intersection-planes'] = [
+            {'name': p.name, 'axis': p.axis, 'offset': p.offset}
+            for p in planes
+        ]
         self.camera = camera or self.perspective_camera()
         self._props['camera-type'] = self.camera.type
         self._props['camera-params'] = self.camera.params
@@ -230,6 +255,10 @@ class Scene(CancelableWaitElement, component='scene.js', esm={'nicegui-scene': '
         await self._wait_for(self._initialized_event)
 
     def _handle_click(self, e: GenericEventArguments) -> None:
+        intersections: dict[str, ScenePoint | None] = {
+            name: ScenePoint(x=pt['x'], y=pt['y'], z=pt['z']) if pt is not None else None
+            for name, pt in e.args['intersections'].items()
+        }
         arguments = SceneClickEventArguments(
             sender=self,
             client=self.client,
@@ -246,6 +275,7 @@ class Scene(CancelableWaitElement, component='scene.js', esm={'nicegui-scene': '
                 y=hit['point']['y'],
                 z=hit['point']['z'],
             ) for hit in e.args['hits']],
+            intersections=intersections,
         )
         for handler in self._click_handlers:
             handle_event(handler, arguments)
