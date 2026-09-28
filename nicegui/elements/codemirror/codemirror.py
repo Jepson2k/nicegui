@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from itertools import accumulate, chain, repeat
-from typing import get_args
+from typing import Literal, TypedDict, get_args
 
-from typing_extensions import Self
+from typing_extensions import NotRequired, Self
 
 from ...defaults import DEFAULT_PROP, resolve_defaults
 from ...elements.mixins.disableable_element import DisableableElement
@@ -24,6 +24,31 @@ from .constants import SUPPORTED_LANGUAGES, SUPPORTED_THEMES
 from .decorations import DecorationElement
 from .keybindings import KeyBindingElement
 from .line_anchors import LineAnchorElement
+
+
+class Diagnostic(TypedDict):
+    """Single linting diagnostic entry.
+
+    ``severity`` defaults to ``'error'`` if omitted.
+    ``source`` is shown next to the message.
+    ``column`` and ``end_column`` (1-indexed; ``end_column`` is exclusive) narrow the mark to a sub-line range.
+    If both are omitted the mark spans the whole line.
+    """
+    line: int
+    message: str
+    severity: NotRequired[Literal['info', 'warning', 'error', 'hint']]
+    source: NotRequired[str]
+    column: NotRequired[int]
+    end_column: NotRequired[int]
+
+
+class DiagnosticCount(TypedDict):
+    """Per-severity counts returned by :meth:`CodeMirror.get_diagnostic_count`."""
+    error: int
+    warning: int
+    info: int
+    hint: int
+    total: int
 
 
 class CodeMirror(KeyBindingElement, DecorationElement, LineAnchorElement, ValueElement[str], DisableableElement,
@@ -53,6 +78,8 @@ class CodeMirror(KeyBindingElement, DecorationElement, LineAnchorElement, ValueE
         decoration_html: bool = False,
         line_anchors: dict[str, int] | None = None,
         on_anchor_change: Handler[CodeMirrorAnchorChangeEventArguments] | None = None,
+        diagnostics: list[Diagnostic] | None = DEFAULT_PROP | None,
+        diagnostic_message_html: bool = DEFAULT_PROP | False,
         line_tooltips: dict[int, str] | None = None,
         line_tooltip_html: bool = False,
     ) -> None:
@@ -105,6 +132,8 @@ class CodeMirror(KeyBindingElement, DecorationElement, LineAnchorElement, ValueE
         :param decoration_html: render the ``text`` field of replace/widget decorations as sanitized HTML rather than plain text (default: ``False``, *added in version 3.17.0*)
         :param line_anchors: initial ``{anchor_id: 1-indexed line}`` mapping of anchors tracking document positions through edits (default: ``None``, *added in version 3.16.0*)
         :param on_anchor_change: callback to be executed when tracked anchor positions change (default: ``None``, *added in version 3.16.0*)
+        :param diagnostics: initial list of ``Diagnostic`` dicts rendered as inline marks with hover tooltips (default: ``None``)
+        :param diagnostic_message_html: render diagnostic ``message`` content as sanitized HTML rather than plain text (default: ``False``)
         :param line_tooltips: initial mapping of 1-indexed line numbers to tooltip content (default: ``None``, *added in version 3.13.0*)
         :param line_tooltip_html: render tooltip content as sanitized HTML rather than plain text (default: ``False``, *added in version 3.13.0*)
         """
@@ -125,6 +154,8 @@ class CodeMirror(KeyBindingElement, DecorationElement, LineAnchorElement, ValueE
         self._props['focus-tracking-enabled'] = False
         self._props['viewport-tracking-enabled'] = False
         self._props['geometry-tracking-enabled'] = False
+        self._props['diagnostics'] = diagnostics or []
+        self._props['diagnostic-message-html'] = diagnostic_message_html
         self._props['line-tooltips'] = line_tooltips or {}
         self._props['line-tooltip-html'] = line_tooltip_html
         self._update_method = 'setEditorValueFromProps'
@@ -272,6 +303,52 @@ class CodeMirror(KeyBindingElement, DecorationElement, LineAnchorElement, ValueE
         """
         self._props['line-wrapping'] = value
         return self
+
+    @property
+    def diagnostics(self) -> list[Diagnostic]:
+        """List of linting diagnostics rendered as inline marks with hover tooltips.
+
+        Each entry is a ``Diagnostic`` dict.
+        Mutations sync to the client.
+
+        *Added in version X.Y.0*
+        """
+        return self._props['diagnostics']
+
+    @diagnostics.setter
+    def diagnostics(self, diagnostics: list[Diagnostic] | None) -> None:
+        self._props['diagnostics'] = diagnostics or []
+
+    def open_lint_panel(self) -> None:
+        """Show CodeMirror's lint panel listing all current diagnostics.
+
+        *Added in version X.Y.0*
+        """
+        self.run_method('openLintPanel')
+
+    def close_lint_panel(self) -> None:
+        """Hide CodeMirror's lint panel.
+
+        *Added in version X.Y.0*
+        """
+        self.run_method('closeLintPanel')
+
+    def toggle_lint_panel(self) -> None:
+        """Toggle CodeMirror's lint panel.
+
+        *Added in version X.Y.0*
+        """
+        self.run_method('toggleLintPanel')
+
+    async def get_diagnostic_count(self) -> DiagnosticCount:
+        """Return a count of currently-set diagnostics by severity.
+
+        The returned dict has keys ``'error'``, ``'warning'``, ``'info'``, ``'hint'``,
+        plus ``'total'`` for the sum.
+
+        *Added in version X.Y.0*
+        """
+        return await self.run_method('getDiagnosticCount')
 
     @property
     def line_tooltips(self) -> dict[int, str]:
