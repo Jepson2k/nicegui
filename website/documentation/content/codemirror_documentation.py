@@ -184,6 +184,19 @@ def line_anchors_demo() -> None:
                               lambda anchors: f'"return" is on line {anchors.get("return", "—")}')
 
 
+@doc.demo('Inserting snippets', '''
+    `insert_snippet` inserts a [snippet](https://codemirror.net/docs/ref/#autocomplete.snippet) into the document.
+    `${1:text}` marks a field whose default is *text*.
+    Tab and Shift-Tab move between the fields, Escape leaves them.
+    The offsets are Python `str` indices into the editor's value, like those of `decorations`.
+
+    *Added in version 3.18.0*
+''')
+def insert_snippet_demo() -> None:
+    editor = ui.codemirror('', language='Python').classes('h-32')
+    ui.button('Insert print', on_click=lambda: editor.insert_snippet('print(${1:value})', len(editor.value)))
+
+
 doc.reference(ui.codemirror)
 
 

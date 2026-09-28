@@ -168,6 +168,9 @@ class CodeMirror(KeyBindingElement, DecorationElement, LineAnchorElement, ValueE
         Editor signals report the cursor selection, focus, visible line range and geometry,
         and ``reveal_line`` scrolls a given line into view.
 
+        *Since version 3.18.0:*
+        ``insert_snippet`` inserts a snippet whose ``${1:name}`` fields are filled in with Tab.
+
         :param value: initial value of the editor (default: "")
         :param on_change: callback to be executed when the value changes (default: `None`)
         :param keymap: mapping of CodeMirror key strings (e.g. "Mod-s", "F5") to handlers, optionally wrapped with ``KeyBinding`` (default: ``None``, *added in version 3.14.0*)
@@ -459,6 +462,31 @@ class CodeMirror(KeyBindingElement, DecorationElement, LineAnchorElement, ValueE
     @line_tooltips.setter
     def line_tooltips(self, value: dict[int, str]) -> None:
         self._props['line-tooltips'] = value
+
+    def insert_snippet(self, template: str, from_: int, to: int | None = None) -> None:
+        """Insert a snippet in place of ``value[from_:to]``.
+
+        The template follows `CodeMirror's snippet syntax <https://codemirror.net/docs/ref/#autocomplete.snippet>`_:
+        ``${1:text}`` marks a field whose default is *text*,
+        Tab and Shift-Tab move between the fields in numeric order and Escape leaves them.
+        Literal braces are written ``\\{`` and ``\\}``.
+        The offsets are Python ``str`` indices into ``value``, like those of the ``decorations`` property.
+        The editor takes focus with the first field selected.
+
+        *Added in version 3.18.0*
+
+        :param template: snippet template
+        :param from_: start of the replaced range
+        :param to: end of the replaced range (default: ``from_``, which inserts the snippet without replacing anything)
+        """
+        if to is None:
+            to = from_
+        if not 0 <= from_ <= to:
+            raise ValueError(f'insert_snippet: {from_}..{to} is not a valid range')
+        length = len(self.value or '')
+        if to > length:
+            raise ValueError(f'insert_snippet: range {from_}..{to} is past the end of the document (length {length})')
+        self.run_method('insertSnippet', template, from_, to)
 
     def _event_args_to_value(self, e: GenericEventArguments) -> str:
         """The event contains a change set which is applied to the current value."""
