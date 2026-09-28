@@ -564,6 +564,7 @@ def test_pointer_event_dispatches_to_object_handler(screen: Screen):
 def test_pointer_capture_keeps_the_drag_on_the_object(screen: Screen):
     """A drag that starts on a captured object keeps reporting to it after the pointer has left it and the canvas."""
     events: list[tuple[str, str, float | None, float | None, float | None]] = []
+    hover_events: list[str] = []
     scene = None
     box = None
 
@@ -575,7 +576,9 @@ def test_pointer_capture_keeps_the_drag_on_the_object(screen: Screen):
             events.append((e.type, e.pointer_type, e.x, e.y, e.z))
         with ui.scene() as scene:
             box = scene.box().capture_pointer() \
-                .on_pointer_down(record).on_pointer_move(record).on_pointer_up(record)
+                .on_pointer_down(record).on_pointer_move(record).on_pointer_up(record) \
+                .on_pointer_over(lambda: hover_events.append('over')) \
+                .on_pointer_out(lambda: hover_events.append('out'))
 
     screen.open('/')
     screen.wait_for(lambda: screen.selenium.execute_script(
@@ -596,6 +599,9 @@ def test_pointer_capture_keeps_the_drag_on_the_object(screen: Screen):
     def orbit_enabled() -> bool:
         return screen.selenium.execute_script(f'return getElement({scene.id}).controls.enabled')
 
+    dispatch('pointermove', 'el.renderer.domElement', 0)
+    screen.wait_for(lambda: hover_events == ['over'])
+    events.clear()
     dispatch('pointerdown', 'el.renderer.domElement', 0)
     screen.wait_for(lambda: any(type_ == 'pointerdown' for type_, *_ in events))
     assert orbit_enabled() is False
@@ -605,6 +611,7 @@ def test_pointer_capture_keeps_the_drag_on_the_object(screen: Screen):
     dispatch('pointerup', 'window', -300)
     screen.wait_for(lambda: any(type_ == 'pointerup' for type_, *_ in events))
     screen.wait_for(orbit_enabled)
+    screen.wait_for(lambda: hover_events == ['over', 'out'])
 
     assert [type_ for type_, *_ in events] == ['pointerdown', 'pointermove', 'pointerup']
     assert events[0][1:] == ('mouse', pytest.approx(0, abs=1e-6), pytest.approx(0, abs=1e-6), 0)
@@ -728,3 +735,39 @@ def test_clicking_the_grid_reports_only_the_ground(screen: Screen):
     screen.open('/')
     screen.find_by_tag('canvas').click()
     screen.wait_for(lambda: hits == ['ground'])
+
+
+def test_deleting_objects_releases_renderer_geometry(screen: Screen):
+    """Repeatedly showing and deleting a handle must not grow GPU allocations."""
+    scene = None
+    handles = []
+
+    @ui.page('/')
+    def page():
+        nonlocal scene
+        with ui.scene() as scene:
+            scene.box().move(2, 0, 0)
+
+        def show():
+            with scene, scene.group() as handle:
+                scene.box(1, 1, 0.1)
+                scene.sphere(0.1)
+            handles.append(handle)
+
+        ui.button('Show handle', on_click=show)
+        ui.button('Hide handle', on_click=lambda: handles.pop().delete())
+
+    screen.open('/')
+
+    def geometries():
+        return screen.selenium.execute_script(
+            f'return getElement({scene.id}).renderer.info.memory.geometries'
+        )
+
+    screen.wait_for(lambda: geometries() > 0)
+    baseline = geometries()
+    for _ in range(3):
+        screen.click('Show handle')
+        screen.wait_for(lambda: geometries() == baseline + 2)
+        screen.click('Hide handle')
+        screen.wait_for(lambda: geometries() == baseline)

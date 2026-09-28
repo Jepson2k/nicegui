@@ -40,6 +40,17 @@ function set_rotation(mesh, R) {
   mesh.rotation.setFromRotationMatrix(R4.transpose());
 }
 
+function resources(mesh) {
+  const result = new Set();
+  mesh.traverse((child) => {
+    if (child.geometry) result.add(child.geometry);
+    for (const material of [child.material].flat()) {
+      if (material) result.add(material);
+    }
+  });
+  return result;
+}
+
 export default {
   template: `
     <div style="position:relative" data-initializing>
@@ -417,7 +428,7 @@ export default {
     const onCapturedPointerEnd = (e) => {
       if (e.pointerId !== this.pointerCapture.pointerId) return;
       emitCapturedPointerEvent("pointerup", e); // a pointercancel ends the drag like a release does
-      this._endPointerCapture();
+      this._endPointerCapture(e);
     };
     // Window listeners instead of setPointerCapture: they also see releases outside the canvas and synthesized events.
     this._startPointerCapture = (id, e) => {
@@ -428,7 +439,7 @@ export default {
       window.addEventListener("pointerup", onCapturedPointerEnd);
       window.addEventListener("pointercancel", onCapturedPointerEnd);
     };
-    this._endPointerCapture = () => {
+    this._endPointerCapture = (event = null) => {
       if (!this.pointerCapture) return;
       this.pointerCapture = null;
       window.removeEventListener("pointermove", onCapturedPointerMove);
@@ -436,13 +447,17 @@ export default {
       window.removeEventListener("pointercancel", onCapturedPointerEnd);
       this.dragging_count = Math.max(0, this.dragging_count - 1);
       if (this.dragging_count === 0) this.controls.enabled = this.userOrbitEnabled;
+      if (event) updateHover(event);
     };
 
-    this.renderer.domElement.addEventListener("pointermove", (e) => {
-      if (this.pointerCapture) return; // the captured object gets its moves from the window listener
-      if (this.interactiveObjects.length === 0 && !this.hoveredObjectId) return;
-      const { id: hitId, point, localPoint } = findHit(e.clientX, e.clientY);
-      const newHoveredId = hitId ?? hoveredTransformTarget();
+    const updateHover = (e) => {
+      const rect = this.renderer.domElement.getBoundingClientRect();
+      const inside = e.clientX >= rect.left && e.clientX < rect.right &&
+        e.clientY >= rect.top && e.clientY < rect.bottom;
+      const { id: hitId, point, localPoint } = inside
+        ? findHit(e.clientX, e.clientY)
+        : { id: null, point: null, localPoint: null };
+      const newHoveredId = inside ? hitId ?? hoveredTransformTarget() : null;
 
       if (newHoveredId !== this.hoveredObjectId) {
         if (this.hoveredObjectId) {
@@ -463,6 +478,16 @@ export default {
         this.hoveredObjectId = newHoveredId;
       }
 
+      return { id: newHoveredId, point, localPoint };
+    };
+
+    this.renderer.domElement.addEventListener("pointerleave", (e) => {
+      if (!this.pointerCapture) updateHover(e);
+    });
+    this.renderer.domElement.addEventListener("pointermove", (e) => {
+      if (this.pointerCapture) return; // the captured object gets its moves from the window listener
+      if (this.interactiveObjects.length === 0 && !this.hoveredObjectId) return;
+      const { id: newHoveredId, point, localPoint } = updateHover(e);
       // Continuous pointermove emission — throttled to ~60Hz to avoid websocket flooding.
       if (newHoveredId && this.objectHandlers.get(newHoveredId)?.has("pointermove")) {
         const now = performance.now();
@@ -862,6 +887,14 @@ export default {
       const interactiveIndex = this.interactiveObjects.indexOf(object.mesh);
       if (interactiveIndex !== -1) this.interactiveObjects.splice(interactiveIndex, 1);
       object.mesh.removeFromParent();
+      // A loaded model can have several meshes sharing one resource. Keep
+      // resources still used by other objects, including detached objects.
+      const obsolete = resources(object.mesh);
+      for (const remaining of this.objects.values()) {
+        if (!remaining.mesh) continue;
+        for (const resource of resources(remaining.mesh)) obsolete.delete(resource);
+      }
+      for (const resource of obsolete) resource.dispose();
       const index = this.draggable_objects.indexOf(object.mesh);
       if (index != -1) this.draggable_objects.splice(index, 1);
     },
