@@ -1325,3 +1325,35 @@ def test_deleting_objects_releases_renderer_geometry(screen: Screen):
         screen.wait_for(lambda: geometries() == baseline + 2)
         screen.click('Hide handle')
         screen.wait_for(lambda: geometries() == baseline)
+
+
+def test_render_on_demand(screen: Screen):
+    scene = None
+    box = None
+
+    @ui.page('/')
+    def page():
+        nonlocal scene, box
+        with ui.scene(render_on_demand=True) as scene:
+            box = scene.box()
+
+    screen.open('/')
+    frames = f'return getElement({scene.id}).renderer.info.render.frame'
+    screen.wait(0.5)
+    drawn = screen.selenium.execute_script(frames)
+    screen.wait(0.5)
+    assert screen.selenium.execute_script(frames) == drawn, 'an unchanged scene is not redrawn'
+
+    box.move(1, 0, 0)
+    screen.wait(0.5)
+    moved = screen.selenium.execute_script(frames)
+    assert moved > drawn, 'a moved object is drawn'
+
+    scene.move_camera(x=2, duration=0.3)
+    screen.wait(0.6)
+    assert screen.selenium.execute_script(frames) > moved + 1, 'a camera move is drawn while it runs'
+
+    screen.selenium.execute_script(f'getElement({scene.id}).request_render()')
+    settled = screen.selenium.execute_script(frames)
+    screen.wait(0.3)
+    assert screen.selenium.execute_script(frames) == settled + 1, 'a requested frame is drawn once'

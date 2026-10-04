@@ -48,22 +48,22 @@ function texture_material(texture) {
 export default class Texture {
   busy = false;
 
-  create_mesh(url, coords) {
-    this.mesh = new THREE.Mesh(texture_geometry(coords), texture_material(texture_loader.load(url)));
+  // Loads are awaited, so the scene's method call finishes, and a render-on-demand scene draws, once the image is in.
+  async create_mesh(url, coords) {
+    this.mesh = new THREE.Mesh(texture_geometry(coords), texture_material(await texture_loader.loadAsync(url)));
     return this.mesh;
   }
-  set_url(url) {
+  async set_url(url) {
     if (this.busy) {
       console.warn("Can't set the texture URL; another `set_url` operation is already running");
       return;
     }
     this.busy = true;
-    const on_success = (texture) => {
-      this.mesh.material = texture_material(texture);
+    try {
+      this.mesh.material = texture_material(await texture_loader.loadAsync(url));
+    } finally {
       this.busy = false;
-    };
-    const on_error = () => (this.busy = false);
-    texture_loader.load(url, on_success, undefined, on_error);
+    }
   }
   set_coordinates(coords) {
     this.mesh.geometry = texture_geometry(coords);

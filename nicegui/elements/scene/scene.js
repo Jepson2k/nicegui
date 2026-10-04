@@ -67,6 +67,23 @@ export default {
     </div>`,
 
   mounted() {
+    // With render-on-demand, a method call can change what the scene shows, so each one asks for a frame,
+    // and one that finishes later asks again when it does.
+    if (this.renderOnDemand) {
+      for (const name of Object.keys(this.$options.methods)) {
+        if (name === "request_render") continue;
+        const method = this[name];
+        this[name] = (...args) => {
+          const result = method(...args);
+          this.request_render();
+          if (result instanceof Promise) result.then(this.request_render, this.request_render);
+          return result;
+        };
+      }
+    }
+    this.render_requested = true;
+    this.scene_version = 0; // advances with every frame drawn, so views of this scene know when to redraw
+
     let resolve_init;
     this.init_promise = new Promise((resolve) => (resolve_init = resolve));
 
@@ -220,6 +237,7 @@ export default {
     };
     const handleDrag = (event) => {
       this.dragConstraints.split(",").forEach((constraint) => applyConstraint(constraint, event.object.position));
+      this.request_render();
       const owner = find_object_with_id(event.object);
       this.$emit(event.type, {
         type: event.type,
@@ -348,12 +366,21 @@ export default {
       }
     };
 
+    // Pointer input can change what the scene shows, through a drag, a hover effect or a highlight drawn by user code.
+    for (const type of ["pointerdown", "pointermove", "pointerup"]) {
+      this.renderer.domElement.addEventListener(type, this.request_render);
+    }
+
     const render = () => {
       requestAnimationFrame(() => setTimeout(() => render(), 1000 / this.fps));
+      if (this.camera_tween?.isPlaying() || this.viewHelper?.animating) this.request_render();
       this.camera_tween?.update();
       const delta = this.clock.getDelta();
-      this.controls.update(delta);
+      this.controls.update(delta); // dispatches "change" while the camera moves, damping included
       this.controls.update(this.clock.getDelta());
+      if (this.renderOnDemand && !this.render_requested) return;
+      this.render_requested = false;
+      this.scene_version++;
       this._syncEffectsIfDirty();
       this.renderer.render(this.scene, this.camera);
       this.text_renderer.render(this.scene, this.camera);
@@ -1049,8 +1076,12 @@ export default {
       // The calls are only started, not awaited, just like they would be if each of them arrived as its own message.
       for (const [name, ...args] of calls) this[name](...args);
     },
+    request_render() {
+      this.render_requested = true;
+    },
     create_controls(up) {
       this.controls = new this.controlClass(this.camera, this.renderer.domElement);
+      this.controls.addEventListener("change", this.request_render);
       // remember the up vector the controls were built for: camera.up may differ from it after a user rotation
       // (TrackballControls) or an interrupted tween, so it cannot be used to decide whether a rebuild is needed
       this.controls_up = up.clone();
@@ -1137,6 +1168,7 @@ export default {
     fps: Number,
     showStats: Boolean,
     controlType: String,
+    renderOnDemand: Boolean,
     raycasterThreshold: Number,
     intersectionPlanes: Array,
     hoverColor: String,

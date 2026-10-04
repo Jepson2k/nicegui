@@ -81,3 +81,26 @@ def test_click_on_stl_with_untagged_children(screen: Screen):
     screen.wait_for_js(query, True)  # the click must hit the child mesh created by the STL loader
     screen.find_all_by_tag('canvas')[1].click()
     screen.wait_for(lambda: obj.id in hits)
+
+
+def test_view_redraws_when_an_on_demand_scene_changes(screen: Screen):
+    scene_view = None
+    box = None
+
+    @ui.page('/')
+    def page():
+        nonlocal scene_view, box
+        with ui.scene(render_on_demand=True) as scene:
+            box = scene.box()
+        scene_view = ui.scene_view(scene)
+
+    screen.open('/')
+    frames = f'return getElement({scene_view.id}).renderer.info.render.frame'
+    screen.wait(0.5)
+    drawn = screen.selenium.execute_script(frames)
+    screen.wait(0.5)
+    assert screen.selenium.execute_script(frames) == drawn, 'an unchanged scene is not redrawn in its view'
+
+    box.move(1, 0, 0)
+    screen.wait(0.5)
+    assert screen.selenium.execute_script(frames) > drawn, 'a moved object is drawn in the view'
