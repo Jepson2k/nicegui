@@ -10,7 +10,7 @@ from selenium.webdriver.common.actions.action_builder import ActionBuilder
 
 from nicegui import app, ui
 from nicegui.elements.scene import Object3D
-from nicegui.events import GenericEventArguments
+from nicegui.events import GenericEventArguments, ScenePointerEventArguments
 from nicegui.testing import Screen, User
 
 from .test_helpers import TEST_DIR

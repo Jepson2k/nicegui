@@ -358,6 +358,7 @@ class CodeMirror(KeyBindingElement, DecorationElement, LineAnchorElement, Signal
         *Added in version X.Y.0*
         """
         return await self.run_method('getDiagnosticCount')
+
     @property
     def completions(self) -> list[CompletionItem]:
         """The current autocomplete entries shown in the dropdown.

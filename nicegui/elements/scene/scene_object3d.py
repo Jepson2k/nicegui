@@ -12,8 +12,7 @@ from typing_extensions import Self
 from ... import binding
 from ...awaitable_response import AwaitableResponse
 from ...dependencies import register_library
-from ...events import Handler, ScenePointerEventArguments
-from ...events import SceneClipPlane
+from ...events import Handler, SceneClipPlane, ScenePointerEventArguments
 from ...helpers import warn_once
 from ...version import __version__
 
@@ -212,6 +211,7 @@ class Object3D:
                 self._effect_spec.get('effect'),
                 self._effect_spec.get('color'),
             )
+
     def _clipping_planes(self) -> None:
         self.scene.run_method(
             'set_clipping_planes',
@@ -583,6 +583,8 @@ class Object3D:
         *added in version X.Y.Z*
         """
         self.scene.run_method('set_transform_rotation_snap', self.id, radians)
+        return self
+
     def set_clipping_planes(self, planes: list[SceneClipPlane]) -> Self:
         """Apply clipping planes to this object and all of its mesh descendants.
 
