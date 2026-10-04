@@ -313,6 +313,7 @@ export default {
       if (!spec || !root) return;
       const artifact = this._buildEffectArtifact(object_id, root, spec);
       if (artifact) this.effectArtifacts.set(object_id, artifact);
+      this.request_render();
     };
 
     this._clearEffectArtifact = (object_id) => {
@@ -331,6 +332,7 @@ export default {
         }
       }
       this.effectArtifacts.delete(object_id);
+      this.request_render();
     };
 
     this._syncEffectsIfDirty = () => {
@@ -366,6 +368,7 @@ export default {
       const delta = this.clock.getDelta();
       this.controls.update(delta);
       this._syncEffectsIfDirty();
+      if (this.viewHelper?.animating) this.request_render();
       if (this.renderOnDemand && rendered_version === this.render_version) return;
       rendered_version = this.render_version;
       this.renderer.render(this.scene, this.camera);
@@ -777,6 +780,7 @@ export default {
       });
       // Local clipping is opt-in on the renderer; flip it the first time anyone sets clipping planes.
       if (clipPlanes.length) this.renderer.localClippingEnabled = true;
+      this.request_render();
     },
     set_axes_inset(opts) {
       this._axes = opts || {};
@@ -804,6 +808,7 @@ export default {
         if (this.viewHelper.dispose) this.viewHelper.dispose();
         this.viewHelper = null;
       }
+      this.request_render();
     },
     set_axes_labels(opts) {
       this._axesLabels = opts;
@@ -815,6 +820,7 @@ export default {
       // reads font/color/radius at paint time (see ViewHelper.js getSpriteMaterial).
       this.viewHelper.setLabelStyle(opts.font ?? "24px Arial", opts.color ?? "#000000", opts.radius ?? 14);
       this.viewHelper.setLabels(labels[0], labels[1], labels[2]);
+      this.request_render();
     },
     async set_handler_types(object_id, types) {
       const record = await get_object(this.objects, object_id);
@@ -904,6 +910,7 @@ export default {
       }
       const object = record.mesh;
       const tc = new TransformControls(this.camera, this.renderer.domElement);
+      tc.addEventListener("change", this.request_render); // hover highlight, drags and setting changes
       tc.attach(object);
       tc.setMode(mode);
       if (size !== undefined && size !== null) tc.setSize(size);
@@ -966,6 +973,7 @@ export default {
       tc.addEventListener("mouseUp", () => emitTransform("transform_end"));
       this.scene.add(tc.getHelper());
       this.transform_controls.set(object_id, tc);
+      this.request_render();
       return true;
     },
     _applyTransformAxes(tc, mode, visible_axes) {
@@ -997,6 +1005,7 @@ export default {
       transformAxisLocks.delete(tc);
       this.transform_controls.delete(object_id);
       if (this.dragging_count === 0) this.controls.enabled = this.userOrbitEnabled;
+      this.request_render();
     },
     set_transform_mode(object_id, mode) {
       const tc = this.transform_controls.get(object_id);
