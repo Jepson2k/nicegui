@@ -200,6 +200,24 @@ def test_texture_set_url_and_coordinates(screen: Screen):
     wait_until(screen, scene, 'texture', 'o.material.map.image?.src', RED_PIXEL_PNG)
 
 
+def test_texture_whose_image_fails_takes_a_later_url(screen: Screen):
+    scene: ui.scene = None  # type: ignore
+    texture: ui.scene.texture = None  # type: ignore
+
+    @ui.page('/')
+    def page():
+        nonlocal scene, texture
+        with ui.scene() as scene:
+            texture = scene.texture('/missing.png', TEXTURE_COORDS_2X2).with_name('texture')
+
+    screen.allowed_js_errors.append('/missing.png - Failed to load resource')
+    screen.open('/')
+    wait_until(screen, scene, 'texture', 'o.geometry.attributes.position.count', 4)
+
+    texture.set_url(RED_PIXEL_PNG)
+    wait_until(screen, scene, 'texture', 'o.material.map.image?.src', RED_PIXEL_PNG)
+
+
 def test_point_cloud_set_points(screen: Screen):
     scene: ui.scene = None  # type: ignore
     point_cloud: ui.scene.point_cloud = None  # type: ignore

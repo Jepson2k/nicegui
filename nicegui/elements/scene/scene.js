@@ -672,6 +672,8 @@ export default {
         // Find the component class
         const component_class = (await import(window.path_prefix + component_url)).default;
         const component = new component_class();
+        // For a component whose look changes after it is created, e.g. once an image has loaded.
+        component.request_render = this.request_render;
 
         // Create the object
         let mesh;

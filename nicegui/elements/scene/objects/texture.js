@@ -48,22 +48,25 @@ function texture_material(texture) {
 export default class Texture {
   busy = false;
 
-  // Loads are awaited, so the scene's method call finishes, and a render-on-demand scene draws, once the image is in.
-  async create_mesh(url, coords) {
-    this.mesh = new THREE.Mesh(texture_geometry(coords), texture_material(await texture_loader.loadAsync(url)));
+  // The image arrives after the mesh is up, so its arrival asks the scene for a frame.
+  create_mesh(url, coords) {
+    const texture = texture_loader.load(url, () => this.request_render());
+    this.mesh = new THREE.Mesh(texture_geometry(coords), texture_material(texture));
     return this.mesh;
   }
-  async set_url(url) {
+  set_url(url) {
     if (this.busy) {
       console.warn("Can't set the texture URL; another `set_url` operation is already running");
       return;
     }
     this.busy = true;
-    try {
-      this.mesh.material = texture_material(await texture_loader.loadAsync(url));
-    } finally {
+    const on_success = (texture) => {
+      this.mesh.material = texture_material(texture);
       this.busy = false;
-    }
+      this.request_render();
+    };
+    const on_error = () => (this.busy = false);
+    texture_loader.load(url, on_success, undefined, on_error);
   }
   set_coordinates(coords) {
     this.mesh.geometry = texture_geometry(coords);
