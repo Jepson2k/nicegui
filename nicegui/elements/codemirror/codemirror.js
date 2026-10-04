@@ -117,6 +117,7 @@ function documentOffsets(doc) {
   }
   return {
     length,
+    toUnit,
     toUtf16(spec) {
       if (spec.kind === "mark" || spec.kind === "replace")
         return { ...spec, from: toUnit(spec.from), to: toUnit(spec.to) };
@@ -323,6 +324,18 @@ export default {
       this.editor.dispatch({
         effects: this.lineWrappingConfig.reconfigure(wrap ? [CM.EditorView.lineWrapping] : []),
       });
+    },
+    async insertSnippet(template, from, to) {
+      if (!this.editor) await this.editorPromise;
+      const offsets = documentOffsets(this.editor.state.doc);
+      from = Math.max(0, Math.min(from, offsets.length));
+      to = Math.max(from, Math.min(to, offsets.length));
+      const range = { from: offsets.toUnit(from), to: offsets.toUnit(to) };
+      this.editor.focus();
+      // `snippet()` widens `to` to the end of the main selection when `to` is where that selection starts,
+      // so the cursor is placed at `to` first, which makes it replace exactly [from, to].
+      this.editor.dispatch({ selection: { anchor: range.to } });
+      CM.snippet(template)(this.editor, null, range.from, range.to);
     },
     buildCompletionSource(completions) {
       const useHtml = this.completionInfoHtml;

@@ -428,13 +428,8 @@ def test_snippet_completion(screen: Screen):
     cm.click()
     editor.trigger_completion()
     screen.wait_for(lambda: 'mysnippet' in _rendered_labels(screen))
-    # CM6 first-option auto-selection is set on a microtask after the popup mounts; CI runners
-    # are slow enough that ENTER can race ahead of `selected: 0` being committed, in which case
-    # the keystroke falls through to a newline insert instead of accepting the completion.
-    screen.wait_for(lambda: screen.selenium.execute_script(
-        'return !!document.querySelector(\'.cm-tooltip-autocomplete li[aria-selected="true"]\')'
-    ))
-    cm.send_keys(Keys.ENTER)
+    # Choose the visible option without racing CodeMirror's keyboard interaction delay.
+    screen.selenium.find_element(By.CSS_SELECTOR, '.cm-tooltip-autocomplete li').click()
     screen.wait_for(lambda: 'for item in iterable:' in (editor.value or ''))
     assert 'pass' in editor.value
 
@@ -516,3 +511,62 @@ def test_completion_info_html_opt_in_renders_sanitized(screen: Screen):
     hijacked = screen.selenium.execute_script('return window.__info_hijack === 1')
     assert not has_script, 'DOMPurify should have stripped <script>'
     assert not hijacked, 'inline script must not have executed'
+
+
+def test_insert_snippet(screen: Screen):
+    editor: ui.codemirror = None  # type: ignore[assignment]
+
+    @ui.page('/')
+    def page():
+        nonlocal editor
+        editor = ui.codemirror('alpha\n')
+
+    screen.open('/')
+    screen.should_contain('alpha')
+    editor.insert_snippet('call(${1:a}, ${2:b}, ${3:c})', 6)
+    screen.wait_for(lambda: editor.value == 'alpha\ncall(a, b, c)')
+    screen.wait_for_js(_selected_text(editor), 'a')
+
+    editor.value = 'alpha\ncall(xyz, b, c)'  # a write from the server into the active field keeps the snippet alive
+    screen.wait_for_js(f'getElement({editor.id}).editor.state.doc.toString()', 'alpha\ncall(xyz, b, c)')
+    ActionChains(screen.selenium).send_keys(Keys.TAB).perform()
+    screen.wait_for_js(_selected_text(editor), 'b')
+    ActionChains(screen.selenium).send_keys(Keys.TAB).perform()
+    screen.wait_for_js(_selected_text(editor), 'c')
+
+
+def test_insert_snippet_offsets_are_python_string_indices(screen: Screen):
+    editor: ui.codemirror = None  # type: ignore[assignment]
+
+    @ui.page('/')
+    def page():
+        nonlocal editor
+        editor = ui.codemirror('🙂 ')
+
+    screen.open('/')
+    screen.should_contain('🙂')
+    editor.insert_snippet('${1:x}', 2)
+    screen.wait_for(lambda: editor.value == '🙂 x')
+
+
+async def test_insert_snippet_rejects_offsets_outside_the_document(user: User):
+    editor: ui.codemirror = None  # type: ignore[assignment]
+
+    @ui.page('/')
+    def page():
+        nonlocal editor
+        editor = ui.codemirror('abc')
+
+    await user.open('/')
+    with pytest.raises(ValueError, match='past the end'):
+        editor.insert_snippet('x', 5)
+    with pytest.raises(ValueError, match='not a valid range'):
+        editor.insert_snippet('x', 2, 1)
+    with pytest.raises(ValueError, match='not a valid range'):
+        editor.insert_snippet('x', -1)
+
+
+def _selected_text(editor: ui.codemirror) -> str:
+    """JavaScript expression evaluating to the text of the editor's main selection."""
+    return (f'(() => {{ const state = getElement({editor.id}).editor.state; '
+            'return state.sliceDoc(state.selection.main.from, state.selection.main.to); })()')
