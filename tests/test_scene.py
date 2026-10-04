@@ -1397,3 +1397,44 @@ def test_deleting_objects_releases_renderer_geometry(screen: Screen):
         screen.wait_for(lambda: geometries() == baseline + 2)
         screen.click('Hide handle')
         screen.wait_for(lambda: geometries() == baseline)
+
+
+def test_render_on_demand(screen: Screen):
+    scene = None
+    view = None
+    box = None
+
+    @ui.page('/')
+    def page():
+        nonlocal scene, view, box
+        with ui.scene(render_on_demand=True) as scene:
+            box = scene.box()
+        view = ui.scene_view(scene)
+
+    def frames() -> list[int]:
+        return screen.selenium.execute_script(
+            f'return [getElement({scene.id}), getElement({view.id})].map(el => el.renderer.info.render.frame)'
+        )
+
+    def idle() -> bool:
+        before = frames()
+        screen.wait(0.5)
+        return frames() == before
+
+    screen.open('/')
+    screen.wait_for(idle)
+
+    drawn = frames()
+    box.move(x=1)
+    screen.wait_for(lambda: all(now > then for now, then in zip(frames(), drawn, strict=True)))
+    screen.wait_for(idle)
+
+    drawn = frames()
+    screen.selenium.execute_script(f'getElement({scene.id}).request_render()')
+    screen.wait_for(lambda: all(now > then for now, then in zip(frames(), drawn, strict=True)))
+    screen.wait_for(idle)
+
+    drawn = frames()
+    canvas = screen.find_by_tag('canvas')
+    ActionChains(screen.selenium).click_and_hold(canvas).move_by_offset(50, 50).release().perform()
+    screen.wait_for(lambda: frames()[0] > drawn[0])

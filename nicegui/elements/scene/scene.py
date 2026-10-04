@@ -100,6 +100,7 @@ class Scene(CancelableWaitElement, component='scene.js', esm={'nicegui-scene': '
                  hover_color: str = DEFAULT_PROP | '#ffffff',
                  hover_opacity: float = DEFAULT_PROP | 0.2,
                  hover_scale: float = DEFAULT_PROP | 1.05,
+                 render_on_demand: bool = DEFAULT_PROP | False,
                  ) -> None:
         """3D Scene
 
@@ -139,12 +140,14 @@ class Scene(CancelableWaitElement, component='scene.js', esm={'nicegui-scene': '
         :param hover_color: default color for the per-object ``hover_effect`` (default: ``'#ffffff'``, *added in version X.Y.Z*)
         :param hover_opacity: opacity of the back-face glow effect (default: ``0.2``, *added in version X.Y.Z*)
         :param hover_scale: linear scale factor applied to the glow effect relative to the source mesh (default: ``1.05``, *added in version X.Y.Z*)
+        :param render_on_demand: whether to redraw the scene only when something changed instead of at every frame (default: ``False``, *added in version X.Y.Z*)
         """
         super().__init__()
         self._props['width'] = width
         self._props['height'] = height
         self._props['fps'] = fps
         self._props['show-stats'] = show_stats
+        self._props['render-on-demand'] = render_on_demand
         self._props['grid'] = grid
         self._props['polar-grid'] = polar_grid
         self._props['background-color'] = background_color
