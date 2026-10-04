@@ -9,7 +9,9 @@ export default {
 
   async mounted() {
     await this.$nextTick();
-    this.scene = getElement(this.sceneId).scene;
+    const parent = getElement(this.sceneId);
+    this.scene = parent.scene;
+    this.render_requested = true;
     if (this.showStats) {
       this.stats = new Stats();
       this.stats.domElement.style.position = "absolute";
@@ -63,7 +65,11 @@ export default {
 
     const render = () => {
       requestAnimationFrame(() => setTimeout(() => render(), 1000 / this.fps));
+      if (this.camera_tween?.isPlaying()) this.render_requested = true;
       this.camera_tween?.update();
+      if (!this.render_requested && parent.scene_version === this.rendered_version) return;
+      this.render_requested = false;
+      this.rendered_version = parent.scene_version;
       this.renderer.render(this.scene, this.camera);
       if (this.showStats) this.stats.update();
     };
@@ -155,6 +161,7 @@ export default {
         this.camera.right = (this.camera.aspect * this.cameraParams.size) / 2;
       }
       this.camera.updateProjectionMatrix();
+      this.render_requested = true;
     },
   },
 

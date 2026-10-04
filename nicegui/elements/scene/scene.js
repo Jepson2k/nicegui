@@ -77,6 +77,23 @@ export default {
     </div>`,
 
   mounted() {
+    // With render-on-demand, a method call can change what the scene shows, so each one asks for a frame,
+    // and one that finishes later asks again when it does.
+    if (this.renderOnDemand) {
+      for (const name of Object.keys(this.$options.methods)) {
+        if (name === "request_render") continue;
+        const method = this[name];
+        this[name] = (...args) => {
+          const result = method(...args);
+          this.request_render();
+          if (result instanceof Promise) result.then(this.request_render, this.request_render);
+          return result;
+        };
+      }
+    }
+    this.render_requested = true;
+    this.scene_version = 0; // advances with every frame drawn, so views of this scene know when to redraw
+
     this.scene = new THREE.Scene();
     this.clock = new THREE.Clock();
     this.objects = new Map();
@@ -189,6 +206,7 @@ export default {
     }
     this.controlClass = { trackball: TrackballControls, map: MapControls }[this.controlType] || OrbitControls;
     this.controls = new this.controlClass(this.camera, this.renderer.domElement);
+    this.controls.addEventListener("change", this.request_render);
     this.drag_controls = new DragControls(this.draggable_objects, this.camera, this.renderer.domElement);
     this.drag_controls.transformGroup = true;
     const applyConstraint = (constraint, position) => {
@@ -198,6 +216,7 @@ export default {
     };
     const handleDrag = (event) => {
       this.dragConstraints.split(",").forEach((constraint) => applyConstraint(constraint, event.object.position));
+      this.request_render();
       this.$emit(event.type, {
         type: event.type,
         object_id: event.object.object_id,
@@ -213,10 +232,19 @@ export default {
     this.drag_controls.addEventListener("drag", handleDrag);
     this.drag_controls.addEventListener("dragend", handleDrag);
 
+    // Pointer input can change what the scene shows, through a drag or a highlight drawn by user code.
+    for (const type of ["pointerdown", "pointermove", "pointerup"]) {
+      this.renderer.domElement.addEventListener(type, this.request_render);
+    }
+
     const render = () => {
       requestAnimationFrame(() => setTimeout(() => render(), 1000 / this.fps));
+      if (this.camera_tween?.isPlaying()) this.request_render();
       this.camera_tween?.update();
-      this.controls.update(this.clock.getDelta());
+      this.controls.update(this.clock.getDelta()); // dispatches "change" while the camera moves, damping included
+      if (this.renderOnDemand && !this.render_requested) return;
+      this.render_requested = false;
+      this.scene_version++;
       this.renderer.render(this.scene, this.camera);
       this.text_renderer.render(this.scene, this.camera);
       this.text3d_renderer.render(this.scene, this.camera);
@@ -265,6 +293,9 @@ export default {
   },
 
   methods: {
+    request_render() {
+      this.render_requested = true;
+    },
     create(type, id, parent_id, ...args) {
       if (!this.is_initialized) return;
       let mesh;
@@ -301,7 +332,7 @@ export default {
         const url = args[0];
         const coords = args[1];
         const geometry = texture_geometry(coords);
-        const material = texture_material(this.texture_loader.load(url));
+        const material = texture_material(this.texture_loader.load(url, this.request_render));
         mesh = new THREE.Mesh(geometry, material);
       } else if (type == "spot_light") {
         mesh = new THREE.Group();
@@ -326,6 +357,7 @@ export default {
           (gltf) => {
             mesh.add(gltf.scene);
             mesh.userData.loaded = true;
+            this.request_render();
             if (mesh.userData.pendingMaterialInfo) {
               const { color, opacity, side } = mesh.userData.pendingMaterialInfo;
               delete mesh.userData.pendingMaterialInfo;
@@ -368,7 +400,10 @@ export default {
         if (type == "stl") {
           const url = args[0];
           geometry = new THREE.BufferGeometry();
-          this.stl_loader.load(url, (geometry) => (mesh.geometry = geometry));
+          this.stl_loader.load(url, (geometry) => {
+            mesh.geometry = geometry;
+            this.request_render();
+          });
         }
         let material;
         if (wireframe) {
@@ -460,6 +495,7 @@ export default {
       const on_success = (texture) => {
         obj.material = texture_material(texture);
         obj.busy = false;
+        this.request_render();
       };
       const on_error = () => (obj.busy = false);
       this.texture_loader.load(url, on_success, undefined, on_error);
@@ -528,6 +564,7 @@ export default {
           if (camera_up_changed) {
             this.controls.dispose();
             this.controls = new this.controlClass(this.camera, this.renderer.domElement);
+            this.controls.addEventListener("change", this.request_render);
             this.controls.target.copy(this.look_at);
             this.camera.lookAt(this.look_at);
           }
@@ -612,5 +649,6 @@ export default {
     fps: Number,
     showStats: Boolean,
     controlType: String,
+    renderOnDemand: Boolean,
   },
 };

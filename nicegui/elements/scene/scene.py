@@ -75,6 +75,7 @@ class Scene(Element, component='scene.js', esm={'nicegui-scene': 'dist'}, defaul
                  control_type: Literal['orbit', 'trackball', 'map'] = DEFAULT_PROP | 'orbit',
                  fps: int = DEFAULT_PROP | 20,
                  show_stats: bool = DEFAULT_PROP | False,
+                 render_on_demand: bool = DEFAULT_PROP | False,
                  ) -> None:
         """3D Scene
 
@@ -96,12 +97,16 @@ class Scene(Element, component='scene.js', esm={'nicegui-scene': 'dist'}, defaul
         :param control_type: type of controls to use for navigating the scene, one of "orbit", "trackball", "map" (default: "orbit", *added in version 3.9.0*)
         :param fps: target frame rate for the scene in frames per second (default: 20, *added in version 3.2.0*)
         :param show_stats: whether to show performance stats (default: ``False``, *added in version 3.2.0*)
+        :param render_on_demand: whether to draw a frame only when the scene or the camera has changed,
+            rather than at every frame; JavaScript that changes three.js objects directly then asks for a frame
+            with the scene element's ``request_render()`` method (default: ``False``, *added in version 3.15.0*)
         """
         super().__init__()
         self._props['width'] = width
         self._props['height'] = height
         self._props['fps'] = fps
         self._props['show-stats'] = show_stats
+        self._props['render-on-demand'] = render_on_demand
         self._props['grid'] = grid
         self._props['background-color'] = background_color
         self.camera = camera or self.perspective_camera()

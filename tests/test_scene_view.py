@@ -59,3 +59,26 @@ def test_camera_move(screen: Screen):
     screen.wait(1)
     position = screen.selenium.execute_script(f'return getElement({scene_view.id}).camera_tween._object')
     assert np.allclose(position, [1, 2, 3, 7, 8, 9, 4, 5, 6])
+
+
+def test_view_redraws_when_an_on_demand_scene_changes(screen: Screen):
+    scene_view = None
+    box = None
+
+    @ui.page('/')
+    def page():
+        nonlocal scene_view, box
+        with ui.scene(render_on_demand=True) as scene:
+            box = scene.box()
+        scene_view = ui.scene_view(scene)
+
+    screen.open('/')
+    frames = f'return getElement({scene_view.id}).renderer.info.render.frame'
+    screen.wait(0.5)
+    drawn = screen.selenium.execute_script(frames)
+    screen.wait(0.5)
+    assert screen.selenium.execute_script(frames) == drawn, 'an unchanged scene is not redrawn in its view'
+
+    box.move(1, 0, 0)
+    screen.wait(0.5)
+    assert screen.selenium.execute_script(frames) > drawn, 'a moved object is drawn in the view'
