@@ -27,23 +27,41 @@ def preserve_cursor_demo() -> None:
     ))
 
 
+@doc.demo('Editor Signals and Reveal Line', '''
+    `on_viewport_change` reports the visible line range — useful for confirming that
+    `reveal_line` actually scrolled the requested line into view.
+    Other signal hooks include `on_focus_change` and `on_geometry_change`.
+
+    *Added in version 3.18.0*
+''')
+def signals_and_reveal_demo() -> None:
+    viewport_status = ui.label('Viewport: ?')
+    editor = ui.codemirror(
+        '\n'.join(f'Line {i}' for i in range(1, 51)),
+        on_viewport_change=lambda e: viewport_status.set_text(f'Viewport: lines {e.from_line}–{e.to_line}'),
+    ).classes('h-32')
+    ui.button('Reveal line 40', on_click=lambda: editor.reveal_line(40))
+
+
 @doc.demo('Autocomplete', '''
-    Pass ``completions`` to surface your own entries in the autocomplete dropdown.
-    Each item is a dict; only ``label`` is required.
-    ``apply`` controls the inserted text, ``detail``/``info`` add helper text,
-    ``type`` picks an icon, ``boost`` biases sort order (-99..99),
-    ``display_label`` overrides the visible text, ``section`` groups entries under a heading,
-    ``commit_characters`` are extra accept-keys, and ``class_name`` adds a CSS class to that entry.
+    Pass `completions` to surface your own entries in the autocomplete dropdown.
+    Each item is a dict; only `label` is required.
+    `apply` controls the inserted text, `detail`/`info` add helper text,
+    `type` picks an icon, `boost` biases sort order (-99..99),
+    `display_label` overrides the visible text, `section` groups entries under a heading,
+    `commit_characters` are extra accept-keys, and `class_name` adds a CSS class to that entry.
 
-    Set ``snippet=True`` and use ``${1:foo}`` markers in ``apply`` for templated insertions —
+    Set `snippet=True` and use `${1:foo}` markers in `apply` for templated insertions —
     Tab cycles between fields. By default your entries merge with the active language pack's
-    completions; pass ``replace_language_completions=True`` to suppress them. Set
-    ``complete_words_in_document=True`` to also surface identifiers already typed elsewhere.
-    Call ``editor.trigger_completion()`` to open the popup programmatically.
+    completions; pass `replace_language_completions=True` to suppress them. Set
+    `complete_words_in_document=True` to also surface identifiers already typed elsewhere.
+    Call `editor.trigger_completion()` to open the popup programmatically.
 
-    Side-panel ``info`` content renders as plain text by default; pass
-    ``completion_info_html=True`` to the constructor to render ``info`` as sanitized HTML
-    via NiceGUI's ``setHTML`` polyfill — useful for code samples, links, or formatted notes.
+    Side-panel `info` content renders as plain text by default; pass
+    `completion_info_html=True` to the constructor to render `info` as sanitized HTML
+    via NiceGUI's `setHTML` polyfill — useful for code samples, links, or formatted notes.
+
+    *Added in version 4.1.0*
 ''')
 def custom_completions_demo() -> None:
     editor = ui.codemirror('', language='Python', completion_info_html=True, completions=[
