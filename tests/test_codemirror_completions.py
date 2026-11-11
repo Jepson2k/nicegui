@@ -7,19 +7,6 @@ from nicegui import ui
 from nicegui.testing import Screen, User
 
 
-def _rendered_labels(screen: Screen) -> list[str]:
-    return screen.selenium.execute_script(
-        'return Array.from(document.querySelectorAll(".cm-tooltip-autocomplete .cm-completionLabel"))'
-        '.map(e => e.textContent);'
-    )
-
-
-def _open_count(screen: Screen) -> int:
-    return screen.selenium.execute_script(
-        'return document.querySelectorAll(".cm-tooltip-autocomplete li").length'
-    )
-
-
 def test_completions_basic(screen: Screen):
     @ui.page('/')
     def page():
@@ -262,3 +249,16 @@ def _selected_text(editor: ui.codemirror) -> str:
     """JavaScript expression evaluating to the text of the editor's main selection."""
     return (f'(() => {{ const state = getElement({editor.id}).editor.state; '
             'return state.sliceDoc(state.selection.main.from, state.selection.main.to); })()')
+
+
+def _rendered_labels(screen: Screen) -> list[str]:
+    return screen.selenium.execute_script(
+        'return Array.from(document.querySelectorAll(".cm-tooltip-autocomplete .cm-completionLabel"))'
+        '.map(e => e.textContent);'
+    )
+
+
+def _open_count(screen: Screen) -> int:
+    return screen.selenium.execute_script(
+        'return document.querySelectorAll(".cm-tooltip-autocomplete li").length'
+    )
