@@ -309,7 +309,7 @@ class CodeMirror(KeyBindingElement, DecorationElement, LineAnchorElement, Signal
         The offsets are Python ``str`` indices into ``value``, like those of the ``decorations`` property.
         The editor takes focus with the first field selected.
 
-        *Added in version 4.1.0*
+        *Added in version 4.2.0*
 
         :param template: snippet template
         :param from\_: start of the replaced range
