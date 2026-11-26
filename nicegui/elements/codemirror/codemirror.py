@@ -12,6 +12,7 @@ from ...events import (
     CodeMirrorFocusChangeEventArguments,
     CodeMirrorGeometryChangeEventArguments,
     CodeMirrorKeyBindingEventArguments,
+    CodeMirrorSelectionChangeEventArguments,
     CodeMirrorViewportChangeEventArguments,
     GenericEventArguments,
     Handler,
@@ -87,6 +88,7 @@ class CodeMirror(KeyBindingElement, DecorationElement, LineAnchorElement, Signal
         *,
         on_change: Handler[ValueChangeEventArguments[str]] | None = None,
         keymap: dict[str, Handler[CodeMirrorKeyBindingEventArguments] | CodeMirror.KeyBinding] | None = None,
+        on_selection_change: Handler[CodeMirrorSelectionChangeEventArguments] | None = None,
         on_focus_change: Handler[CodeMirrorFocusChangeEventArguments] | None = None,
         on_viewport_change: Handler[CodeMirrorViewportChangeEventArguments] | None = None,
         on_geometry_change: Handler[CodeMirrorGeometryChangeEventArguments] | None = None,
@@ -141,13 +143,10 @@ class CodeMirror(KeyBindingElement, DecorationElement, LineAnchorElement, Signal
         Editor signals report the focus, visible line range and geometry,
         and ``reveal_line`` scrolls a given line into view.
 
-        *Since version 4.1.0:*
-        Custom autocomplete entries, optionally with snippet fields, can be supplied via ``completions``.
-        ``insert_snippet`` inserts a snippet whose ``${1:name}`` fields are filled in with Tab.
-
         :param value: initial value of the editor (default: "")
         :param on_change: callback to be executed when the value changes (default: ``None``)
         :param keymap: mapping of CodeMirror key strings (e.g. "Mod-s", "F5") to handlers, optionally wrapped with ``KeyBinding`` (default: ``None``, *added in version 3.14.0*)
+        :param on_selection_change: callback when the selection changes (throttled to 50 ms) (*added in version 4.1.0*)
         :param on_focus_change: callback when the editor gains or loses focus (*added in version 3.18.0*)
         :param on_viewport_change: callback when the visible line range changes (throttled to 100 ms) (*added in version 3.18.0*)
         :param on_geometry_change: callback when the editor or content size changes (throttled to 100 ms) (*added in version 3.18.0*)
@@ -156,23 +155,11 @@ class CodeMirror(KeyBindingElement, DecorationElement, LineAnchorElement, Signal
         :param indent: string to use for indentation (any string consisting entirely of the same whitespace character, default: "    ")
         :param line_wrapping: whether to wrap lines (default: ``False``)
         :param highlight_whitespace: whether to highlight whitespace (default: ``False``)
-        :param completions: list of autocomplete entries shown in the dropdown.
-            Each item is a ``CompletionItem`` dict; only ``label`` is required.
-            By default these merge with whatever the active language pack provides.
-            *Added in version 4.1.0*
-        :param replace_language_completions: if ``True``, suppress the active language pack's
-            built-in completions and show only ``completions`` (and word-from-document, if enabled).
-            Default: ``False`` (merge).
-            *Added in version 4.1.0*
-        :param complete_words_in_document: if ``True``, also suggest identifiers already present
-            elsewhere in the document (CodeMirror's ``completeAnyWord`` source). Default: ``False``.
-            *Added in version 4.1.0*
-        :param completion_info_html: render the side-panel ``info`` text as sanitized HTML rather than
-            plain text. Default: ``False``.
-            *Added in version 4.1.0*
-        :param tooltip_class: CSS class added to the autocomplete popup container.
-            Combine with ``ui.add_css`` to style the popup.
-            *Added in version 4.1.0*
+        :param completions: list of ``CompletionItem`` dicts shown in the autocomplete dropdown next to the language's own completions; only ``label`` is required (default: ``None``, *added in version 4.2.0*)
+        :param replace_language_completions: show ``completions`` (and words from the document, if enabled) instead of the language's own completions (default: ``False``, *added in version 4.2.0*)
+        :param complete_words_in_document: also suggest words that appear elsewhere in the document (CodeMirror's ``completeAnyWord``, default: ``False``, *added in version 4.2.0*)
+        :param completion_info_html: render the ``info`` side panel as sanitized HTML rather than plain text (default: ``False``, *added in version 4.2.0*)
+        :param tooltip_class: CSS class added to the autocomplete popup, to style it with ``ui.add_css`` (default: ``None``, *added in version 4.2.0*)
         :param decorations: initial list of decoration specs applied to the editor;
             spec offsets (``from``/``to``/``position``) are Python ``str`` indices (default: ``None``, *added in version 3.17.0*)
         :param decoration_html: render the ``text`` field of replace/widget decorations as sanitized HTML rather than plain text (default: ``False``, *added in version 3.17.0*)
@@ -184,7 +171,7 @@ class CodeMirror(KeyBindingElement, DecorationElement, LineAnchorElement, Signal
         super().__init__(value=value, on_value_change=self._update_codepoints, keymap=keymap,
                          decorations=decorations, decoration_html=decoration_html,
                          line_anchors=line_anchors, on_anchor_change=on_anchor_change,
-                         on_focus_change=on_focus_change,
+                         on_selection_change=on_selection_change, on_focus_change=on_focus_change,
                          on_viewport_change=on_viewport_change, on_geometry_change=on_geometry_change)
         self._codepoints = b''
         self._update_codepoints()
@@ -228,7 +215,7 @@ class CodeMirror(KeyBindingElement, DecorationElement, LineAnchorElement, Signal
         self._props['theme'] = theme
 
     def set_theme(self, theme: SUPPORTED_THEMES) -> Self:
-        """Sets the theme of the editor."""
+        """Set the theme of the editor."""
         self._props['theme'] = theme
         return self
 
@@ -247,7 +234,7 @@ class CodeMirror(KeyBindingElement, DecorationElement, LineAnchorElement, Signal
         self._props['language'] = _resolve_language(language)
 
     def set_language(self, language: SUPPORTED_LANGUAGES | None = None) -> Self:
-        """Sets the language of the editor (case-insensitive)."""
+        """Set the language of the editor (case-insensitive)."""
         self._props['language'] = _resolve_language(language)
         return self
 
@@ -269,7 +256,7 @@ class CodeMirror(KeyBindingElement, DecorationElement, LineAnchorElement, Signal
         self._props['line-wrapping'] = value
 
     def set_line_wrapping(self, value: bool) -> Self:
-        """Sets whether line wrapping is enabled.
+        """Set whether line wrapping is enabled.
 
         *Added in version 3.2.0*
         """
@@ -284,7 +271,7 @@ class CodeMirror(KeyBindingElement, DecorationElement, LineAnchorElement, Signal
         Returns a copy.
         Reassign the property to update the editor (pass ``None`` or an empty list to remove all entries).
 
-        *Added in version 4.1.0*
+        *Added in version 4.2.0*
         """
         return list(self._props['completions'])
 
@@ -296,7 +283,7 @@ class CodeMirror(KeyBindingElement, DecorationElement, LineAnchorElement, Signal
     def trigger_completion(self) -> None:
         """Open the autocomplete popup programmatically (equivalent to Ctrl-Space).
 
-        *Added in version 4.1.0*
+        *Added in version 4.2.0*
         """
         self.run_method('triggerCompletion')
 
